@@ -1,4 +1,14 @@
 {
   "comment": "经评估不影响本项目的漏洞。每一项都必须写明理由和失效日期，到期后自动重新报警。",
-  "allow": []
+  "allow": [
+    {
+      "id": "OSV-2024-112",
+      "dependency": "boost",
+      "summary": "Boost.Graph read_graphviz 解析子图时递归导致栈溢出（OSS-Fuzz）",
+      "reason": "OSV 按整个 Boost 仓库的 commit 匹配。本项目只构建 asio、beast 及其依赖（dependencies.json 的 libraries 字段），2026-11-20 核对：参与构建的 50 个库中没有 graph，编译时包含的头文件中没有 boost/graph，也不解析 Graphviz 文件。",
+      "condition": "libraries 中不包含 graph。一旦加入 graph，此豁免失效，必须重新评估。",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-20"
+    }
+  ]
 }
