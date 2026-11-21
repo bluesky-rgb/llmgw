@@ -182,6 +182,32 @@ flowchart LR
 
 组件依赖关系图和类图见 [diagrams.md 第 4、5 节](diagrams.md#4-组件图)。
 
+#### 模块之间如何交互
+
+![模块设计与交互](images/11-module-interactions.svg)
+
+| 步骤 | 调用 | 接口（草案） | 说明 |
+|---|---|---|---|
+| ① | Session → config | `ConfigStore::snapshot()` | 取一份配置快照，整个请求期间都用这一份 |
+| ② | Session → middleware | `chain.on_request(ctx)` | 依次执行鉴权、限流、预算；预算中间件向 accounting 冻结预估费用（虚线） |
+| ③ | Session → router | `router.resolve(model)` | 得到按顺序排列的目标列表 |
+| ④ | Session → executor | `executor.execute(ctx, targets, sink)` | 交给执行器，`sink` 是写回客户端的出口 |
+| ⑤ | executor → breaker | `breaker.allow()` / `on_success()` / `on_failure()` | 跳过已熔断的上游，并上报结果 |
+| ⑥ | executor → provider | `adapter.build_request(ctx, target)` | 请求改写（删字段、改名、强制设置）和协议适配 |
+| ⑦ | provider → upstream | `pool.acquire(host)`，发送请求 | 从本 Worker 的连接池取连接，发往上游 |
+| ⑧ | upstream → stream | `transcoder.feed(chunk)` | 逐块解析 SSE，旁路提取 usage，响应检查（业务错误码） |
+| ⑨ | stream → Session | `sink.write(chunk)` | 写回客户端；写完才读下一块（背压） |
+| ⑩ | Session → middleware | `chain.on_complete(ctx, outcome)` | 按实际用量结算预算、记录指标；无论成功、失败还是客户端中止都会执行 |
+
+**交互规则：**
+
+1. **Session 是唯一的编排者**（中介者模式）。middleware、router、executor 之间互不调用，都只和 Session 打交道。这样替换其中任何一个，都不会影响其他模块
+2. **只有执行链路是直线调用**：executor → provider → upstream → stream。这条链路对性能最敏感，所以不经过 Session 中转
+3. **模块之间只通过 `RequestContext` 传递数据**。不使用全局变量，也不在模块之间互相保存引用
+4. **跨 Worker 共享的只有两个模块**：config（只读快照）和 accounting（预算账本）。其余模块都是每个 Worker 一份，不需要加锁
+5. **observability 是横切关注点**：所有模块都可以上报指标和日志，但它不反过来调用任何业务模块；上报失败也不影响请求处理
+6. **admin 只能通过 config 生效**：管理接口不直接修改其他模块的状态，而是提交新配置，由 ConfigStore 校验后整体替换
+
 ### 3.3 一个请求的处理流程
 
 1. 接收连接，在所在线程上为它启动一个 Session 协程

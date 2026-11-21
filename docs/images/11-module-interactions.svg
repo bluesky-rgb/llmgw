@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="690" viewBox="0 0 680 690" role="img"><title>模块设计与交互</title><desc>Session 是编排者，依次调用：1 从 config 取配置快照；2 调用 middleware 的 on_request，预算中间件访问 accounting 冻结预算；3 调用 router 得到目标列表；4 调用 executor 执行；5 executor 查询 breaker；6 executor 调用 provider 做请求改写和协议适配；7 provider 通过 upstream 连接池发请求到上游模型；8 upstream 把数据交给 stream 解析用量；9 stream 把数据交回 Session 写给客户端；10 结束时 Session 调用 middleware 的 on_complete 结算。admin 负责重新加载 config，所有模块向 observability 上报指标和日志。</desc><style>text{font-family:'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif}.t{font-size:14px;font-weight:400;fill:#3d3d3a}.ts{font-size:12px;font-weight:400;fill:#73726c}.th{font-size:14px;font-weight:500;fill:#1f1e1d}.box{fill:#faf9f5;stroke:#b4b2a9}.arr{stroke:#73726c;stroke-width:1.5;fill:none}.c-purple>rect,.c-purple>circle,rect.c-purple,circle.c-purple{fill:#EEEDFE;stroke:#534AB7}.c-purple>.th,.c-purple>.t{fill:#3C3489}.c-purple>.ts{fill:#534AB7}.c-teal>rect,.c-teal>circle,rect.c-teal,circle.c-teal{fill:#E1F5EE;stroke:#0F6E56}.c-teal>.th,.c-teal>.t{fill:#085041}.c-teal>.ts{fill:#0F6E56}.c-amber>rect,.c-amber>circle,rect.c-amber,circle.c-amber{fill:#FAEEDA;stroke:#854F0B}.c-amber>.th,.c-amber>.t{fill:#633806}.c-amber>.ts{fill:#854F0B}.c-red>rect,.c-red>circle,rect.c-red,circle.c-red{fill:#FCEBEB;stroke:#A32D2D}.c-red>.th,.c-red>.t{fill:#791F1F}.c-red>.ts{fill:#A32D2D}.c-gray>rect,.c-gray>circle,rect.c-gray,circle.c-gray{fill:#F1EFE8;stroke:#5F5E5A}.c-gray>.th,.c-gray>.t{fill:#444441}.c-gray>.ts{fill:#5F5E5A}</style><rect width="680" height="690" fill="#ffffff"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#73726c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="40" y="20" width="150" height="40" rx="8" class="box" stroke-width="0.5"/>
+<text class="th" x="115" y="40" text-anchor="middle" dominant-baseline="central">客户端</text>
+<line x1="95" y1="60" x2="95" y2="78" class="arr" marker-end="url(#arrow)"/>
+<line x1="145" y1="80" x2="145" y2="62" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="480" y="20" width="160" height="40" rx="8" stroke-width="0.5"/><text class="th" x="560" y="40" text-anchor="middle" dominant-baseline="central">admin</text></g>
+<line x1="600" y1="60" x2="600" y2="78" class="arr" marker-end="url(#arrow)"/>
+<g class="c-purple"><rect x="40" y="80" width="150" height="440" rx="10" stroke-width="0.5"/><text class="th" x="115" y="104" text-anchor="middle" dominant-baseline="central">Session</text><text class="ts" x="115" y="124" text-anchor="middle" dominant-baseline="central">server · 编排者</text></g>
+<g class="c-teal"><rect x="260" y="80" width="190" height="56" rx="8" stroke-width="0.5"/><text class="th" x="355" y="98" text-anchor="middle" dominant-baseline="central">middleware</text><text class="ts" x="355" y="118" text-anchor="middle" dominant-baseline="central">鉴权 限流 预算</text></g>
+<g class="c-teal"><rect x="260" y="170" width="190" height="56" rx="8" stroke-width="0.5"/><text class="th" x="355" y="188" text-anchor="middle" dominant-baseline="central">router</text><text class="ts" x="355" y="208" text-anchor="middle" dominant-baseline="central">模型名 → 目标列表</text></g>
+<g class="c-teal"><rect x="260" y="260" width="190" height="56" rx="8" stroke-width="0.5"/><text class="th" x="355" y="278" text-anchor="middle" dominant-baseline="central">executor</text><text class="ts" x="355" y="298" text-anchor="middle" dominant-baseline="central">重试规则 截止时间</text></g>
+<g class="c-teal"><rect x="260" y="350" width="190" height="56" rx="8" stroke-width="0.5"/><text class="th" x="355" y="368" text-anchor="middle" dominant-baseline="central">provider</text><text class="ts" x="355" y="388" text-anchor="middle" dominant-baseline="central">请求改写 协议适配</text></g>
+<g class="c-teal"><rect x="260" y="440" width="190" height="56" rx="8" stroke-width="0.5"/><text class="th" x="355" y="458" text-anchor="middle" dominant-baseline="central">upstream</text><text class="ts" x="355" y="478" text-anchor="middle" dominant-baseline="central">连接池 HTTP 客户端</text></g>
+<g class="c-amber"><rect x="480" y="80" width="160" height="56" rx="8" stroke-width="0.5"/><text class="th" x="560" y="98" text-anchor="middle" dominant-baseline="central">config</text><text class="ts" x="560" y="118" text-anchor="middle" dominant-baseline="central">配置快照</text></g>
+<g class="c-amber"><rect x="480" y="170" width="160" height="56" rx="8" stroke-width="0.5"/><text class="th" x="560" y="188" text-anchor="middle" dominant-baseline="central">accounting</text><text class="ts" x="560" y="208" text-anchor="middle" dominant-baseline="central">预算账本 价格表</text></g>
+<g class="c-teal"><rect x="480" y="260" width="160" height="56" rx="8" stroke-width="0.5"/><text class="th" x="560" y="278" text-anchor="middle" dominant-baseline="central">breaker</text><text class="ts" x="560" y="298" text-anchor="middle" dominant-baseline="central">每个上游一个</text></g>
+<g class="c-teal"><rect x="480" y="440" width="160" height="56" rx="8" stroke-width="0.5"/><text class="th" x="560" y="458" text-anchor="middle" dominant-baseline="central">stream</text><text class="ts" x="560" y="478" text-anchor="middle" dominant-baseline="central">SSE 解析 用量</text></g>
+<rect x="260" y="540" width="190" height="44" rx="8" class="box" stroke-width="0.5"/>
+<text class="t" x="355" y="562" text-anchor="middle" dominant-baseline="central">GPT · MiniMax · MiMo</text>
+<path d="M190 92 L230 92 L230 70 L510 70 L510 78" fill="none" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="300" y="58" text-anchor="middle" dominant-baseline="central">①</text>
+<line x1="190" y1="108" x2="258" y2="108" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="224" y="122" text-anchor="middle" dominant-baseline="central">② ⑩</text>
+<path d="M450 120 L465 120 L465 198 L478 198" fill="none" stroke="#BA7517" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+<line x1="190" y1="198" x2="258" y2="198" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="224" y="186" text-anchor="middle" dominant-baseline="central">③</text>
+<line x1="190" y1="288" x2="258" y2="288" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="224" y="276" text-anchor="middle" dominant-baseline="central">④</text>
+<line x1="450" y1="288" x2="478" y2="288" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="464" y="248" text-anchor="middle" dominant-baseline="central">⑤</text>
+<line x1="355" y1="316" x2="355" y2="348" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="372" y="332" text-anchor="middle" dominant-baseline="central">⑥</text>
+<line x1="355" y1="406" x2="355" y2="438" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="372" y="422" text-anchor="middle" dominant-baseline="central">⑦</text>
+<line x1="355" y1="496" x2="355" y2="538" class="arr" marker-end="url(#arrow)"/>
+<line x1="450" y1="468" x2="478" y2="468" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="464" y="430" text-anchor="middle" dominant-baseline="central">⑧</text>
+<path d="M560 496 L560 515 L192 515" fill="none" stroke="#534AB7" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text class="ts" x="500" y="528" text-anchor="middle" dominant-baseline="central">⑨</text>
+<g class="c-gray"><rect x="40" y="606" width="600" height="40" rx="8" stroke-width="0.5"/><text class="th" x="340" y="626" text-anchor="middle" dominant-baseline="central">observability：所有模块上报指标和日志</text></g>
+<rect x="40" y="664" width="12" height="12" rx="2" class="c-purple" stroke-width="0.5"/><text class="ts" x="58" y="674">编排者</text>
+<rect x="120" y="664" width="12" height="12" rx="2" class="c-teal" stroke-width="0.5"/><text class="ts" x="138" y="674">每个 Worker 一份</text>
+<rect x="260" y="664" width="12" height="12" rx="2" class="c-amber" stroke-width="0.5"/><text class="ts" x="278" y="674">全局共享</text>
+<rect x="350" y="664" width="12" height="12" rx="2" class="c-gray" stroke-width="0.5"/><text class="ts" x="368" y="674">管理与观测</text>
+</svg>
