@@ -4,39 +4,92 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 3 * * 1"   # 每周一检查一次依赖漏洞（没有提交时也能发现新公布的漏洞）
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  build-test:
+    if: github.event_name != 'schedule'
+    name: build-test (${{ matrix.name }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: release
-            flags: ""
             type: Release
+            flags: ""
           - name: asan-ubsan
-            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer"
             type: Debug
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
           - name: tsan
-            flags: "-fsanitize=thread"
             type: Debug
-    name: ${{ matrix.name }}
+            flags: "-fsanitize=thread"
     steps:
       - uses: actions/checkout@v5
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev
+      - name: Cache third-party sources
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: deps-${{ hashFiles('cmake/dependencies.json') }}
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.type }} -DCMAKE_CXX_FLAGS="${{ matrix.flags }}"
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.type }}
+          -DCMAKE_CXX_FLAGS="${{ matrix.flags }}"
+          -DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps
       - name: Build
         run: cmake --build build
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
   architecture:
+    if: github.event_name != 'schedule'
     name: architecture
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - name: Check module dependency rules
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev clang-format-18 clang-tidy-18
+      # 每一项检查都会执行并报告，便于一次看到所有问题
+      - name: Module dependency rules
+        if: always()
         run: python3 tools/check_deps.py
+      - name: TODO format
+        if: always()
+        run: python3 tools/check_todos.py
+      - name: clang-format
+        if: always()
+        run: |
+          files=$(find src tests/unit -name '*.cpp' -o -name '*.h' -o -name '*.hpp')
+          if [ -n "$files" ]; then clang-format-18 --dry-run --Werror $files; fi
+      - name: Cache third-party sources
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: deps-${{ hashFiles('cmake/dependencies.json') }}
+      - name: Configure (for clang-tidy)
+        if: always()
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-18
+          -DLLMGW_BUILD_PROTOTYPE=OFF
+          -DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps
+      - name: clang-tidy
+        if: always()
+        run: CLANG_TIDY=clang-tidy-18 tools/run_clang_tidy.sh build
+
+  security:
+    name: security
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check third-party dependencies against OSV
+        run: python3 tools/check_vulns.py

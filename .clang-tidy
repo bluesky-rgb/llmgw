@@ -23,6 +23,8 @@ Checks: >
   readability-else-after-return,
   readability-redundant-*
 WarningsAsErrors: '*'
+# 只报告项目自己 src/ 下的头文件，第三方库作为系统头文件忽略
+HeaderFilterRegex: '.*/src/.*'
 CheckOptions:
   - { key: readability-function-cognitive-complexity.Threshold, value: 25 }
   - { key: readability-function-size.LineThreshold,            value: 80 }
@@ -30,6 +32,8 @@ CheckOptions:
   - { key: readability-function-size.NestingThreshold,         value: 4 }
   - { key: readability-identifier-naming.ClassCase,            value: CamelCase }
   - { key: readability-identifier-naming.StructCase,           value: CamelCase }
+  # promise_type 是 C++ 协程标准要求的名字，不能改
+  - { key: readability-identifier-naming.StructIgnoredRegexp,  value: '^promise_type$' }
   - { key: readability-identifier-naming.FunctionCase,         value: lower_case }
   - { key: readability-identifier-naming.VariableCase,         value: lower_case }
   - { key: readability-identifier-naming.PrivateMemberSuffix,  value: _ }

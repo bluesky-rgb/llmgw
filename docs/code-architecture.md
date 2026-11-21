@@ -168,12 +168,12 @@ llmgw_add_module(upstream
 | 编译、单元测试、集成测试 | CMake + CTest | ✅ 已启用 |
 | 内存错误、未定义行为、数据竞争 | ASan + UBSan、TSan | ✅ 已启用 |
 | 模块依赖规则、文件行数 | `tools/check_deps.py` | ✅ 已启用 |
-| 编译警告视为错误 | `-Werror`（`llmgw_add_module`） | M2 起对新模块生效 |
-| 代码格式 | clang-format | M2 启用 |
-| 静态检查（命名、复杂度、协程规则、常见 bug） | clang-tidy（[.clang-tidy](../.clang-tidy)） | M2 起对新模块启用 |
+| 编译警告视为错误 | `-Werror`（`llmgw_add_module`） | ✅ 已启用（新模块和单元测试） |
+| 代码格式 | clang-format 18 | ✅ 已启用（`src/`、`tests/unit/`） |
+| 静态检查（命名、复杂度、协程规则、常见 bug） | clang-tidy 18（[.clang-tidy](../.clang-tidy)） | ✅ 已启用（`src/`） |
 | 覆盖率门槛 | gcov / llvm-cov | M3 启用 |
-| 依赖漏洞扫描 | OSV-Scanner | M2 启用 |
-| TODO 必须关联 Issue | CI 脚本 | M2 启用 |
+| 依赖漏洞扫描 | `tools/check_vulns.py`：按提交哈希查询 OSV 数据库（[cmake/dependencies.json](../cmake/dependencies.json) 是依赖的唯一清单） | ✅ 已启用；每周定时运行 |
+| TODO 必须关联 Issue | `tools/check_todos.py` | ✅ 已启用 |
 
 ## 6. 代码评审
 
