@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="360" viewBox="0 0 680 360" role="img"><title>三种线程模型对比</title><desc>A：每个连接一个线程，一万个连接需要一万个线程。B：所有线程共享一个任务队列和共享数据，访问数据要加锁。C：每个线程负责固定的连接，有自己独享的数据，不用加锁，需要时再汇总到 metrics。</desc><style>text{font-family:'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif}.t{font-size:14px;font-weight:400;fill:#3d3d3a}.ts{font-size:12px;font-weight:400;fill:#73726c}.th{font-size:14px;font-weight:500;fill:#1f1e1d}.box{fill:#faf9f5;stroke:#b4b2a9}.arr{stroke:#73726c;stroke-width:1.5;fill:none}.c-purple>rect,.c-purple>circle,rect.c-purple,circle.c-purple{fill:#EEEDFE;stroke:#534AB7}.c-purple>.th,.c-purple>.t{fill:#3C3489}.c-purple>.ts{fill:#534AB7}.c-teal>rect,.c-teal>circle,rect.c-teal,circle.c-teal{fill:#E1F5EE;stroke:#0F6E56}.c-teal>.th,.c-teal>.t{fill:#085041}.c-teal>.ts{fill:#0F6E56}.c-amber>rect,.c-amber>circle,rect.c-amber,circle.c-amber{fill:#FAEEDA;stroke:#854F0B}.c-amber>.th,.c-amber>.t{fill:#633806}.c-amber>.ts{fill:#854F0B}.c-red>rect,.c-red>circle,rect.c-red,circle.c-red{fill:#FCEBEB;stroke:#A32D2D}.c-red>.th,.c-red>.t{fill:#791F1F}.c-red>.ts{fill:#A32D2D}.c-gray>rect,.c-gray>circle,rect.c-gray,circle.c-gray{fill:#F1EFE8;stroke:#5F5E5A}.c-gray>.th,.c-gray>.t{fill:#444441}.c-gray>.ts{fill:#5F5E5A}</style><rect width="680" height="360" fill="#ffffff"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#73726c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<text class="th" x="130" y="26" text-anchor="middle">A：一连接一线程</text>
+<text class="ts" x="130" y="46" text-anchor="middle">现在的做法</text>
+<text class="th" x="340" y="26" text-anchor="middle">B：共享大厅</text>
+<text class="ts" x="340" y="46" text-anchor="middle">事件驱动，要加锁</text>
+<text class="th" x="550" y="26" text-anchor="middle">C：分区负责</text>
+<text class="ts" x="550" y="46" text-anchor="middle">事件驱动，推荐</text>
+<rect x="40" y="70" width="70" height="40" rx="6" class="box" stroke-width="0.5"/><text class="t" x="75" y="90" text-anchor="middle" dominant-baseline="central">连接</text>
+<line x1="110" y1="90" x2="148" y2="90" class="arr" marker-end="url(#arrow)"/>
+<g class="c-purple"><rect x="150" y="70" width="70" height="40" rx="6" stroke-width="0.5"/><text class="th" x="185" y="90" text-anchor="middle" dominant-baseline="central">线程</text></g>
+<rect x="40" y="130" width="70" height="40" rx="6" class="box" stroke-width="0.5"/><text class="t" x="75" y="150" text-anchor="middle" dominant-baseline="central">连接</text>
+<line x1="110" y1="150" x2="148" y2="150" class="arr" marker-end="url(#arrow)"/>
+<g class="c-purple"><rect x="150" y="130" width="70" height="40" rx="6" stroke-width="0.5"/><text class="th" x="185" y="150" text-anchor="middle" dominant-baseline="central">线程</text></g>
+<rect x="40" y="190" width="70" height="40" rx="6" class="box" stroke-width="0.5"/><text class="t" x="75" y="210" text-anchor="middle" dominant-baseline="central">连接</text>
+<line x1="110" y1="210" x2="148" y2="210" class="arr" marker-end="url(#arrow)"/>
+<g class="c-purple"><rect x="150" y="190" width="70" height="40" rx="6" stroke-width="0.5"/><text class="th" x="185" y="210" text-anchor="middle" dominant-baseline="central">线程</text></g>
+<g class="c-amber"><rect x="40" y="250" width="180" height="56" rx="8" stroke-width="0.5"/><text class="th" x="130" y="268" text-anchor="middle" dominant-baseline="central">共 1 万个线程</text><text class="ts" x="130" y="288" text-anchor="middle" dominant-baseline="central">内存撑不住</text></g>
+<rect x="250" y="70" width="180" height="40" rx="6" class="box" stroke-width="0.5"/><text class="t" x="340" y="90" text-anchor="middle" dominant-baseline="central">共用一个任务队列</text>
+<line x1="275" y1="110" x2="275" y2="148" class="arr" marker-end="url(#arrow)"/>
+<line x1="340" y1="110" x2="340" y2="148" class="arr" marker-end="url(#arrow)"/>
+<line x1="405" y1="110" x2="405" y2="148" class="arr" marker-end="url(#arrow)"/>
+<g class="c-purple"><rect x="250" y="150" width="50" height="40" rx="6" stroke-width="0.5"/><text class="th" x="275" y="170" text-anchor="middle" dominant-baseline="central">线程</text></g>
+<g class="c-purple"><rect x="315" y="150" width="50" height="40" rx="6" stroke-width="0.5"/><text class="th" x="340" y="170" text-anchor="middle" dominant-baseline="central">线程</text></g>
+<g class="c-purple"><rect x="380" y="150" width="50" height="40" rx="6" stroke-width="0.5"/><text class="th" x="405" y="170" text-anchor="middle" dominant-baseline="central">线程</text></g>
+<line x1="275" y1="190" x2="275" y2="248" class="arr" marker-end="url(#arrow)"/>
+<line x1="340" y1="190" x2="340" y2="248" class="arr" marker-end="url(#arrow)"/>
+<line x1="405" y1="190" x2="405" y2="248" class="arr" marker-end="url(#arrow)"/>
+<g class="c-amber"><rect x="250" y="250" width="180" height="56" rx="8" stroke-width="0.5"/><text class="th" x="340" y="268" text-anchor="middle" dominant-baseline="central">共享数据</text><text class="ts" x="340" y="288" text-anchor="middle" dominant-baseline="central">访问都要加锁</text></g>
+<g class="c-purple"><rect x="460" y="70" width="50" height="40" rx="6" stroke-width="0.5"/><text class="th" x="485" y="90" text-anchor="middle" dominant-baseline="central">线程</text></g>
+<g class="c-purple"><rect x="525" y="70" width="50" height="40" rx="6" stroke-width="0.5"/><text class="th" x="550" y="90" text-anchor="middle" dominant-baseline="central">线程</text></g>
+<g class="c-purple"><rect x="590" y="70" width="50" height="40" rx="6" stroke-width="0.5"/><text class="th" x="615" y="90" text-anchor="middle" dominant-baseline="central">线程</text></g>
+<line x1="485" y1="110" x2="485" y2="128" class="arr" marker-end="url(#arrow)"/>
+<line x1="550" y1="110" x2="550" y2="128" class="arr" marker-end="url(#arrow)"/>
+<line x1="615" y1="110" x2="615" y2="128" class="arr" marker-end="url(#arrow)"/>
+<rect x="460" y="130" width="50" height="40" rx="6" class="box" stroke-width="0.5"/><text class="t" x="485" y="150" text-anchor="middle" dominant-baseline="central">连接</text>
+<rect x="525" y="130" width="50" height="40" rx="6" class="box" stroke-width="0.5"/><text class="t" x="550" y="150" text-anchor="middle" dominant-baseline="central">连接</text>
+<rect x="590" y="130" width="50" height="40" rx="6" class="box" stroke-width="0.5"/><text class="t" x="615" y="150" text-anchor="middle" dominant-baseline="central">连接</text>
+<line x1="485" y1="170" x2="485" y2="188" class="arr" marker-end="url(#arrow)"/>
+<line x1="550" y1="170" x2="550" y2="188" class="arr" marker-end="url(#arrow)"/>
+<line x1="615" y1="170" x2="615" y2="188" class="arr" marker-end="url(#arrow)"/>
+<g class="c-teal"><rect x="460" y="190" width="50" height="40" rx="6" stroke-width="0.5"/><text class="th" x="485" y="210" text-anchor="middle" dominant-baseline="central">独享</text></g>
+<g class="c-teal"><rect x="525" y="190" width="50" height="40" rx="6" stroke-width="0.5"/><text class="th" x="550" y="210" text-anchor="middle" dominant-baseline="central">独享</text></g>
+<g class="c-teal"><rect x="590" y="190" width="50" height="40" rx="6" stroke-width="0.5"/><text class="th" x="615" y="210" text-anchor="middle" dominant-baseline="central">独享</text></g>
+<line x1="485" y1="230" x2="485" y2="248" class="arr" marker-end="url(#arrow)"/>
+<line x1="550" y1="230" x2="550" y2="248" class="arr" marker-end="url(#arrow)"/>
+<line x1="615" y1="230" x2="615" y2="248" class="arr" marker-end="url(#arrow)"/>
+<g class="c-teal"><rect x="460" y="250" width="180" height="56" rx="8" stroke-width="0.5"/><text class="th" x="550" y="268" text-anchor="middle" dominant-baseline="central">需要时再汇总</text><text class="ts" x="550" y="288" text-anchor="middle" dominant-baseline="central">例如 /metrics</text></g>
+<rect x="40" y="322" width="12" height="12" rx="2" class="c-purple" stroke-width="0.5"/><text class="ts" x="58" y="332">线程</text>
+<rect x="110" y="322" width="12" height="12" rx="2" class="c-amber" stroke-width="0.5"/><text class="ts" x="128" y="332">问题所在</text>
+<rect x="210" y="322" width="12" height="12" rx="2" class="c-teal" stroke-width="0.5"/><text class="ts" x="228" y="332">推荐做法</text>
+</svg>

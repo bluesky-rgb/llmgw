@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="300" viewBox="0 0 680 300" role="img"><title>一个线程轮流运行三个协程的时间线</title><desc>三个协程 A、B、C 分别对应三条连接。每个协程大部分时间在等待上游，只有很短的时间在运行。线程这一行显示它依次运行 A、B、C、A、C、B，在协程等待时切换到别的协程，从不空闲。</desc><style>text{font-family:'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif}.t{font-size:14px;font-weight:400;fill:#3d3d3a}.ts{font-size:12px;font-weight:400;fill:#73726c}.th{font-size:14px;font-weight:500;fill:#1f1e1d}.box{fill:#faf9f5;stroke:#b4b2a9}.arr{stroke:#73726c;stroke-width:1.5;fill:none}.c-purple>rect,.c-purple>circle,rect.c-purple,circle.c-purple{fill:#EEEDFE;stroke:#534AB7}.c-purple>.th,.c-purple>.t{fill:#3C3489}.c-purple>.ts{fill:#534AB7}.c-teal>rect,.c-teal>circle,rect.c-teal,circle.c-teal{fill:#E1F5EE;stroke:#0F6E56}.c-teal>.th,.c-teal>.t{fill:#085041}.c-teal>.ts{fill:#0F6E56}.c-amber>rect,.c-amber>circle,rect.c-amber,circle.c-amber{fill:#FAEEDA;stroke:#854F0B}.c-amber>.th,.c-amber>.t{fill:#633806}.c-amber>.ts{fill:#854F0B}.c-red>rect,.c-red>circle,rect.c-red,circle.c-red{fill:#FCEBEB;stroke:#A32D2D}.c-red>.th,.c-red>.t{fill:#791F1F}.c-red>.ts{fill:#A32D2D}.c-gray>rect,.c-gray>circle,rect.c-gray,circle.c-gray{fill:#F1EFE8;stroke:#5F5E5A}.c-gray>.th,.c-gray>.t{fill:#444441}.c-gray>.ts{fill:#5F5E5A}</style><rect width="680" height="300" fill="#ffffff"/>
+<text class="ts" x="40" y="30" dominant-baseline="central">时间 →</text>
+<text class="th" x="40" y="70" dominant-baseline="central">协程 A</text>
+<text class="ts" x="40" y="88" dominant-baseline="central">连接 1</text>
+<text class="th" x="40" y="130" dominant-baseline="central">协程 B</text>
+<text class="ts" x="40" y="148" dominant-baseline="central">连接 2</text>
+<text class="th" x="40" y="190" dominant-baseline="central">协程 C</text>
+<text class="ts" x="40" y="208" dominant-baseline="central">连接 3</text>
+<text class="th" x="40" y="250" dominant-baseline="central">线程 1</text>
+<text class="ts" x="40" y="268" dominant-baseline="central">实际在跑</text>
+<line x1="130" y1="78" x2="640" y2="78" stroke="#b4b2a9" stroke-width="0.5" stroke-dasharray="3 4"/>
+<line x1="130" y1="138" x2="640" y2="138" stroke="#b4b2a9" stroke-width="0.5" stroke-dasharray="3 4"/>
+<line x1="130" y1="198" x2="640" y2="198" stroke="#b4b2a9" stroke-width="0.5" stroke-dasharray="3 4"/>
+<rect x="130" y="62" width="70" height="32" rx="4" class="c-purple" stroke-width="0.5"/>
+<rect x="400" y="62" width="70" height="32" rx="4" class="c-purple" stroke-width="0.5"/>
+<rect x="210" y="122" width="70" height="32" rx="4" class="c-purple" stroke-width="0.5"/>
+<rect x="560" y="122" width="70" height="32" rx="4" class="c-purple" stroke-width="0.5"/>
+<rect x="290" y="182" width="100" height="32" rx="4" class="c-purple" stroke-width="0.5"/>
+<rect x="480" y="182" width="70" height="32" rx="4" class="c-purple" stroke-width="0.5"/>
+<text class="ts" x="300" y="78" text-anchor="middle" dominant-baseline="central">等上游…</text>
+<text class="ts" x="420" y="138" text-anchor="middle" dominant-baseline="central">等上游…</text>
+<text class="ts" x="210" y="198" text-anchor="middle" dominant-baseline="central">还没到</text>
+<g class="c-teal"><rect x="130" y="234" width="70" height="32" rx="4" stroke-width="0.5"/><text class="th" x="165" y="250" text-anchor="middle" dominant-baseline="central">A</text></g>
+<g class="c-teal"><rect x="210" y="234" width="70" height="32" rx="4" stroke-width="0.5"/><text class="th" x="245" y="250" text-anchor="middle" dominant-baseline="central">B</text></g>
+<g class="c-teal"><rect x="290" y="234" width="100" height="32" rx="4" stroke-width="0.5"/><text class="th" x="340" y="250" text-anchor="middle" dominant-baseline="central">C</text></g>
+<g class="c-teal"><rect x="400" y="234" width="70" height="32" rx="4" stroke-width="0.5"/><text class="th" x="435" y="250" text-anchor="middle" dominant-baseline="central">A</text></g>
+<g class="c-teal"><rect x="480" y="234" width="70" height="32" rx="4" stroke-width="0.5"/><text class="th" x="515" y="250" text-anchor="middle" dominant-baseline="central">C</text></g>
+<g class="c-teal"><rect x="560" y="234" width="70" height="32" rx="4" stroke-width="0.5"/><text class="th" x="595" y="250" text-anchor="middle" dominant-baseline="central">B</text></g>
+<rect x="130" y="282" width="12" height="12" rx="2" class="c-purple" stroke-width="0.5"/><text class="ts" x="148" y="292">协程在运行</text>
+<line x1="250" y1="288" x2="280" y2="288" stroke="#b4b2a9" stroke-width="0.5" stroke-dasharray="3 4"/><text class="ts" x="288" y="292">协程暂停，在等待</text>
+</svg>

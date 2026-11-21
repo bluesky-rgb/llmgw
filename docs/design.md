@@ -332,6 +332,10 @@ llmgw/
 
 ### 5.8 并发与连接设计
 
+> 📖 配图讲解见 [concurrency-explained.md](concurrency-explained.md)。
+
+![整体架构](images/01-overall-architecture.svg)
+
 **核心思想：** 线程负责用满多个 CPU 核（并行），协程负责让每个核同时照看大量连接（并发），连接池负责复用到上游的连接。线程之间尽量不共享数据。
 
 #### 对象与职责

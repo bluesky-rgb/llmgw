@@ -15,7 +15,7 @@
         └── /metrics → Prometheus / Grafana
 ```
 
-> 📐 整体设计（目标、架构、模块、里程碑）见 [docs/design.md](docs/design.md)，分析与设计图见 [docs/diagrams.md](docs/diagrams.md)。
+> 📐 整体设计（目标、架构、模块、里程碑）见 [docs/design.md](docs/design.md)，分析与设计图见 [docs/diagrams.md](docs/diagrams.md)，并发方案图解见 [docs/concurrency-explained.md](docs/concurrency-explained.md)。
 
 ## 功能（v0.1）
 
