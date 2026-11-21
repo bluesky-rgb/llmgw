@@ -70,6 +70,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | 项目目标、范围、架构、工程设计、各项机制 | [设计文档](docs/design.md) |
 | 怎样做到加厂商、加功能不改核心代码 | [可扩展与可插拔设计](docs/extensibility.md) |
 | 会出哪些故障、怎么防护、怎么降级、怎么验证 | [稳定性设计](docs/stability.md) |
+| 监控哪些指标、记录哪些日志、怎么出用量报表 | [监控、日志与统计设计](docs/observability.md) |
 | GPT、MiniMax、MiMo 三家的接入方式、差异和验证清单 | [上游厂商适配说明](docs/providers.md) |
 | 线程、协程、连接池、背压、预算预留是怎么回事 | [并发方案图解](docs/concurrency-explained.md) |
 | 目标分解、上下文、用例、组件、类、时序、状态、部署、计划等分析图 | [分析与设计图](docs/diagrams.md) |
