@@ -5,7 +5,12 @@ llmgw_fetch_dependency(googletest)
 include(GoogleTest)
 
 add_executable(llmgw_unit_tests
-  unit/core/version_test.cpp)
+  unit/core/version_test.cpp
+  unit/core/error_test.cpp
+  unit/core/result_test.cpp
+  unit/core/request_context_test.cpp
+  unit/core/response_stream_test.cpp
+  unit/core/metrics_test.cpp)
 target_link_libraries(llmgw_unit_tests PRIVATE GTest::gtest_main llmgw::core)
 target_compile_options(llmgw_unit_tests PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>

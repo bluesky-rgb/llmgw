@@ -46,10 +46,10 @@ class Middleware {
  public:
   virtual ~Middleware() = default;
   // 返回“放行”，或者直接给出响应（401、429、缓存命中……）
-  virtual asio::awaitable<Decision> on_request(RequestContext& ctx) = 0;
-  // 请求结束时调用（成功、失败、客户端中止都会调用）
-  virtual asio::awaitable<void> on_complete(const RequestContext& ctx,
-                                            const Outcome& outcome) = 0;
+  // ctx 用指针：协程参数不能用引用（code-architecture.md 3.4），Session 保证 ctx 在整个调用期间存活
+  virtual Task<Decision> on_request(RequestContext* ctx) = 0;
+  // 请求结束时调用（成功、失败、客户端中止都会调用）；终态在 ctx->outcome 中
+  virtual Task<> on_complete(const RequestContext* ctx) = 0;
 };
 
 // 插件工厂：全局一个，负责校验配置、为每个 Worker 创建实例
@@ -57,7 +57,7 @@ class MiddlewareFactory {
  public:
   virtual ~MiddlewareFactory() = default;
   virtual std::string_view name() const = 0;                 // 配置里用的名字
-  virtual std::expected<void, std::string> validate(const Json& cfg) const = 0;
+  virtual Result<void> validate(const Json& cfg) const = 0;
   virtual std::unique_ptr<Middleware> create(const Json& cfg, WorkerContext& w) const = 0;
 };
 
@@ -72,7 +72,7 @@ LLMGW_REGISTER_MIDDLEWARE(RateLimitFactory);
 | **每个 Worker 一个实例** | 工厂为每个 Worker 调用一次 `create`。实例只被一个线程访问，所以不需要加锁 |
 | **共享状态只能走 `StateStore`** | 需要跨 Worker 共享的数据（比如预算），必须通过 `StateStore`，不能自己用全局变量 |
 | **配置先校验** | 加载或热加载配置时，先调用 `validate`；任何一个插件校验失败，整份配置都不生效 |
-| **错误用返回值** | 用 `std::expected` 或 `Decision` 返回错误；热路径上不抛异常 |
+| **错误用返回值** | 用 `Result<T>` 或 `Decision` 返回错误；热路径上不抛异常 |
 | **一定会收尾** | 只要 `on_request` 被调用过，`on_complete` 就一定会被调用，插件可以放心地在这里释放资源、结算预算 |
 
 ## 5. 配置驱动组装

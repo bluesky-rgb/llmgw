@@ -26,6 +26,8 @@ WarningsAsErrors: '*'
 # 只报告项目自己 src/ 下的头文件，第三方库作为系统头文件忽略
 HeaderFilterRegex: '.*/src/.*'
 CheckOptions:
+  # Boost.Asio 的 awaitable.hpp 与 impl/awaitable.ipp 有意互相包含（有包含保护）；只豁免 Boost，我们自己的头文件仍然检查
+  - { key: misc-header-include-cycle.IgnoredFilesList, value: 'boost/.*' }
   - { key: readability-function-cognitive-complexity.Threshold, value: 25 }
   - { key: readability-function-size.LineThreshold,            value: 80 }
   - { key: readability-function-size.ParameterThreshold,       value: 6 }

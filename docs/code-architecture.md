@@ -132,6 +132,7 @@ llmgw_add_module(upstream
 | 规则 | 原因 | 检查工具 |
 |---|---|---|
 | 协程的参数**不要用引用** | 协程暂停期间，引用指向的对象可能已经被销毁 | clang-tidy `cppcoreguidelines-avoid-reference-coroutine-parameters` |
+| 调用方会 `co_await` 等它结束、能保证存活的对象（比如 `RequestContext`），**用指针传递**；其余按值传递或传智能指针 | 指针在调用处显式写出 `&ctx`，提醒读者“这个对象由调用方持有” | 同上（引用参数会被拦下）；代码评审 |
 | 不要把有捕获的 lambda 写成协程 | lambda 对象销毁后，捕获的变量也就没了 | clang-tidy `cppcoreguidelines-avoid-capturing-lambda-coroutines` |
 | 持有锁时不能 `co_await` | 协程可能在另一个时刻恢复，锁会被长时间持有甚至死锁 | clang-tidy `misc-coroutine-hostile-raii` |
 | 协程里不能阻塞 | 会卡住同一线程上的所有连接 | 代码评审 + 运行时看门狗 |
@@ -139,7 +140,9 @@ llmgw_add_module(upstream
 
 ### 3.5 错误处理
 
-- 可能失败的操作返回 `std::expected<T, Error>`；`Error` 是 `core` 中定义的统一错误类型，包含错误码、HTTP 状态码和说明
+- 可能失败的操作返回 `Result<T>`（`llmgw/core/result.h`，接口与 `std::expected<T, Error>` 相同），失败时 `return fail(ErrorCode::..., "说明")`；`Error` 是 `core` 中定义的统一错误类型，错误码决定 HTTP 状态码、响应体中的 `code` 和是否建议客户端重试
+- 代码中不直接写 `tl::`，只使用 `Result` 和 `fail()`（ADR-007）
+- 异步函数返回 `Task<T>`（`llmgw/core/task.h`），不直接写 `boost::asio::awaitable`
 - 热路径上不抛异常；异常只用于启动阶段（配置错误等）
 - 不允许静默吞掉错误：要么处理，要么向上返回，要么至少记录日志和指标
 
@@ -172,7 +175,8 @@ llmgw_add_module(upstream
 | 模块依赖规则、文件行数 | `tools/check_deps.py` | ✅ 已启用 |
 | 编译警告视为错误 | `-Werror`（`llmgw_add_module`） | ✅ 已启用（新模块和单元测试） |
 | 代码格式 | clang-format 18 | ✅ 已启用（`src/`、`tests/unit/`） |
-| 静态检查（命名、复杂度、协程规则、常见 bug） | clang-tidy 18（[.clang-tidy](../.clang-tidy)） | ✅ 已启用（`src/`） |
+| 静态检查（命名、复杂度、协程规则、常见 bug） | clang-tidy 18（[.clang-tidy](../.clang-tidy)） | ✅ 已启用（`src/` 的源文件，以及每个公开头文件；0.4 起覆盖只有头文件的模块） |
+| 每个公开头文件能单独编译 | `llmgw_add_module` 自动为每个头文件生成一个只包含它的 `.cpp`，以 `-Werror` 编译 | ✅ 已启用（0.4） |
 | 覆盖率门槛 | gcov / llvm-cov | M3 启用 |
 | 依赖漏洞扫描 | `tools/check_vulns.py`：按提交哈希查询 OSV 数据库（[cmake/dependencies.json](../cmake/dependencies.json) 是依赖的唯一清单） | ✅ 已启用；每周定时运行 |
 | TODO 必须关联 Issue | `tools/check_todos.py` | ✅ 已启用 |

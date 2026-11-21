@@ -183,28 +183,26 @@ flowchart TB
 
 ## 5. 类图
 
-核心抽象。接口都设计成异步（返回 `awaitable`），这样无论底层选择协程还是回调，上层都不需要改。
+核心抽象。可能等待的接口都返回 `Task<T>`（Asio 协程，ADR-006），可能失败的返回 `Result<T>`（ADR-007）。`RequestContext`、`Target`、`ResponseStream` 等公共类型的权威定义在 `src/core/include/llmgw/core/`，见[任务 0.4 的类图](tasks/0.4-core-interfaces.md#31-类图)。
 
 ```mermaid
 classDiagram
     direction LR
 
     class RequestContext {
-        +string request_id
-        +string key_id
-        +string model
-        +bool stream
-        +json body
-        +TimePoint deadline
-        +CancelToken cancel
-        +TokenUsage usage
+        +const RequestInfo request
+        +const shared_ptr~Snapshot~ config
+        +AuthInfo auth
+        +vector~Attempt~ attempts
+        +Usage usage
+        +Outcome outcome
     }
 
     class Middleware {
         <<interface>>
         +name() string
-        +on_request(ctx) awaitable~optional~Reply~~
-        +on_complete(ctx, outcome) awaitable~void~
+        +on_request(ctx*) Task~Decision~
+        +on_complete(ctx*) Task~void~
     }
     class AuthMiddleware
     class RateLimitMiddleware {
@@ -218,21 +216,22 @@ classDiagram
 
     class MiddlewareChain {
         -vector~Middleware~ items
-        +run(ctx) awaitable~optional~Reply~~
+        +on_request(ctx*) Task~Decision~
+        +on_complete(ctx*) Task~void~
     }
     MiddlewareChain o-- Middleware
 
     class Router {
-        +resolve(model) vector~Target~
+        +resolve(ctx) Result~vector~Target~~
     }
     class Target {
         +string provider
-        +string upstream_model
+        +string model
     }
     Router ..> Target
 
     class Executor {
-        +execute(ctx, targets, sink) awaitable~Outcome~
+        +execute(ctx*, targets) Task~Result~ResponseStream~~
         -should_retry(failure) bool
     }
     class CircuitBreaker {
@@ -257,15 +256,15 @@ classDiagram
     Executor --> ProviderAdapter
 
     class UpstreamPool {
-        +acquire(host) awaitable~Connection~
+        +acquire(host) Task~Result~Connection~~
         +release(conn)
     }
     ProviderAdapter ..> UpstreamPool
 
     class StateStore {
         <<interface>>
-        +incr(key, delta, ttl) awaitable~int64~
-        +get(key) awaitable~optional~int64~~
+        +incr(key, delta, ttl) Task~int64~
+        +get(key) Task~optional~int64~~
     }
     class MemoryStore
     class RedisStore
