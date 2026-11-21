@@ -76,6 +76,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | 目标分解、上下文、用例、组件、类、时序、状态、部署、计划等分析图 | [分析与设计图](docs/diagrams.md) |
 | 每个设计决策的背景、选择和代价 | [设计决策记录](docs/decisions.md) |
 | 怎么编译、配置和运行当前的原型 | [原型使用手册](docs/usage.md) |
+| 上线前还要做哪些事（按优先级） | [生产就绪检查清单](docs/production-readiness.md) |
 | 还有哪些问题没定、哪些文档要补 | [设计文档第 11 节](docs/design.md#11-待补充与开放问题) |
 
 ## 路线图

@@ -6,7 +6,7 @@
 | 当前代码 | v0.1 原型（cpp-httplib，线程池阻塞模型），用于验证功能和作为性能对照组 |
 | 目标版本 | v1.0（Asio 协程，见[里程碑](#9-里程碑)） |
 | 首批上游 | OpenAI（GPT）、MiniMax（国内站）、小米 MiMo（Token Plan），见 [上游厂商适配说明](providers.md) |
-| 相关文档 | [可扩展与可插拔](extensibility.md) · [稳定性设计](stability.md) · [监控、日志与统计](observability.md) · [上游厂商适配](providers.md) · [并发方案图解](concurrency-explained.md) · [分析与设计图](diagrams.md) · [设计决策记录](decisions.md) · [原型使用手册](usage.md) |
+| 相关文档 | [生产就绪检查清单](production-readiness.md) · [可扩展与可插拔](extensibility.md) · [稳定性设计](stability.md) · [监控、日志与统计](observability.md) · [上游厂商适配](providers.md) · [并发方案图解](concurrency-explained.md) · [分析与设计图](diagrams.md) · [设计决策记录](decisions.md) · [原型使用手册](usage.md) |
 
 ## 目录
 
@@ -98,11 +98,13 @@
 | 容灾 | 熔断 | 每个上游一个熔断器，三态模型 | ⬜ |
 | 容灾 | 超时与取消 | 连接、首字节、空闲、总时长四种超时；客户端断开后立即停止读取上游 | 🟡 只有读取超时，取消不及时 |
 | 性能 | 上游连接池 | 每个线程一个，复用 TCP / TLS 连接 | ⬜ |
+| 网络 | 出站代理 | 每个上游可以单独配置 HTTP / HTTPS 代理，也支持 `HTTPS_PROXY` 环境变量 | ⬜ |
+| 容量 | 上游配额感知 | 读取上游的剩余配额，快用完时主动把流量分到其他目标（见 [6.13](#613-上游配额感知)） | ⬜ |
 | 性能 | 背压 | 客户端慢时自动放慢读取上游 | ⬜ 原型的队列没有上限 |
 | 安全 | 网关 API key 鉴权 | 配置中只保存 key 的哈希，比较时用常量时间算法 | 🟡 明文保存，普通比较 |
 | 成本 | Token 统计与费用核算 | 按价格表计算每个请求的费用 | 🟡 只统计 Token |
 | 成本 | 预算 | 按 key 设置日、月预算，先冻结后结算 | ⬜ |
-| 成本 | 限流 | 按 key 限制 RPM（每分钟请求数）和 TPM（每分钟 Token 数） | ⬜ |
+| 成本 | 限流 | 按 key 限制 RPM（每分钟请求数）、TPM（每分钟 Token 数）和**同时进行的请求数** | ⬜ |
 | 运维 | 配置热加载 | `SIGHUP` 或 Admin API 触发，不中断正在进行的请求 | ⬜ |
 | 运维 | 过载保护 | 连接数上限、排队超时，超出时返回 503 | ⬜ |
 | 运维 | 优雅退出 | 停止接收新连接，等待进行中的请求结束（有上限时间） | ⬜ |
@@ -297,7 +299,19 @@ asio::awaitable<void> Session::handle(HttpRequest req) {
 
 ### 3.5 部署形态
 
-v1.0 只支持**单实例**部署：`Nginx → llmgw → 各上游`，旁边是 Prometheus 和 Grafana，用 docker compose 一键启动。多实例部署需要 Redis 共享状态，放在 v1.x。部署图见 [diagrams.md 第 10 节](diagrams.md#10-部署图)。
+v1.0 提供两种部署方案，都不依赖 Redis：
+
+| 方案 | 结构 | 适用场景 |
+|---|---|---|
+| 单实例 | `Nginx → llmgw → 各上游`，旁边是 Prometheus 和 Grafana，docker compose 一键启动 | 开发、测试、小团队，可以接受短暂中断 |
+| **双实例（生产推荐）** | 负载均衡 → 两个 llmgw 实例，各自独立运行 | 生产环境，避免单点故障 |
+
+双实例时，每个实例的限流计数和预算账本是各自独立的，会有误差。处理办法：
+- **预算**：每个 key 的预算按实例数平均分配（配置 `budget.split_across_instances: 2`），保证总花费不会超出；代价是流量不均时，某个实例可能先用完自己那一份
+- **限流**：同样按实例数分摊额度，误差在负载均衡的不均衡程度以内
+- 需要精确的全局预算和限流时，使用 v1.x 的 Redis 方案
+
+部署图见 [diagrams.md 第 10 节](diagrams.md#10-部署图)。部署位置（国内或海外）尚未确定，见 [production-readiness.md 第 0 节](production-readiness.md#0-待决定部署位置)。
 
 ---
 
@@ -423,6 +437,8 @@ llmgw/
 - **失效连接**：池里的连接可能已经被上游关闭。如果请求在发送阶段就失败，说明上游没收到，属于“可以安全重试”，自动换新连接重发一次
 - **流式请求**：HTTP/1.1 下一条连接同一时间只能跑一个请求，流式输出期间连接一直被占用。池子主要省的是握手时间，并发流数仍然决定连接数。HTTP/2 多路复用留作 v1.x 的优化
 - **DNS**：解析结果按 TTL 缓存（默认 60 秒），解析本身放在 `BlockingPool` 里执行
+- **出站代理**：每个上游可以配置 `proxy`（如 `http://127.0.0.1:7890`）；HTTPS 上游通过 `CONNECT` 建立隧道后再做 TLS 握手。连接池的分组键包含代理地址，经过代理和不经过代理的连接不会混用。没有单独配置时，读取 `HTTPS_PROXY` / `NO_PROXY` 环境变量
+- **上游 TLS**：默认校验证书，最低 TLS 1.2；可以为每个上游指定 CA 证书文件
 
 ### 5.4 关键参数
 
@@ -528,6 +544,7 @@ Session 协程里的转发循环是“**读上游一块 → 写给客户端 → 
 - **算法**：令牌桶，按 key 分别限制 RPM 和 TPM
 - **TPM 的预扣**：请求开始时还不知道会消耗多少 token。按“输入的估算 token 数 + `max_tokens`”预扣；请求里没有 `max_tokens` 时，使用配置中的默认值（比如 1024）。请求结束后按实际用量多退少补
 - **单机实现**：每个 Worker 持有一份令牌桶，额度为“总额度 ÷ Worker 数”，不需要加锁。代价是有一定误差：某个 Worker 的额度用完时，其他 Worker 可能还有剩余。对限流来说，这个精度是够用的
+- **并发上限**：每个 key 同时进行的请求数有上限（默认 50）。流式请求一条要持续一两分钟，只限制“每分钟多少次”挡不住一个 key 同时发起几百条长连接、占满所有资源。并发计数在请求开始时加一、`on_complete` 时减一；单机部署时由 `BudgetLedger` 所在的全局对象统一计数
 - 超出限制返回 429，并带上 `Retry-After` 响应头
 
 ### 6.6 成本与预算
@@ -541,7 +558,11 @@ Session 协程里的转发循环是“**读上游一块 → 写给客户端 → 
 - **预算**（`BudgetLedger`）：按 key 设置日预算和月预算。请求开始时冻结预估费用，“查余额 + 冻结”是一个原子操作；请求结束后按实际费用结算、多退少补。超出预算的行为可以配置：
   - `reject`：返回 402
   - `downgrade`：改用配置中指定的便宜模型
-- **单机持久化**：预算累计值每隔几秒写入本地文件，重启后恢复，防止重启一次预算就清零
+- **单机持久化**：预算累计值每隔几秒写入本地文件，重启后恢复，防止重启一次预算就清零。写入方式：
+  - **原子写入**：先写临时文件并 `fsync`，再用 `rename` 替换正式文件。任何时刻断电，磁盘上都只会是完整的旧文件或完整的新文件
+  - 文件带版本号和校验和；保留最近 3 份快照。启动时发现最新的一份损坏，自动使用上一份，并告警
+  - 磁盘写满或写入失败时，降级为只用内存，并告警（见 [stability.md 第 5 节](stability.md#5-降级策略)）
+- **时区**：“日预算”“月预算”按配置的时区计算（`accounting.timezone`，默认 `Asia/Shanghai`）；超时计算始终使用单调时钟，与时区无关
 
 图解见 [concurrency-explained.md 第 8 节](concurrency-explained.md#8-预算预留)，数据流图见 [diagrams.md 第 9 节](diagrams.md#9-数据流图token-与费用)。
 
@@ -627,6 +648,16 @@ Session 协程里的转发循环是“**读上游一块 → 写给客户端 → 
 - 费用核算支持订阅套餐（`billing: subscription`），用于 MiMo Token Plan：费用记为 0，照常统计 token，并可设置套餐额度提醒
 - 不做参数取值之间的自动映射（比如不同厂商的 `reasoning_effort`），用 `drop_fields` / `set_fields` 显式处理
 
+### 6.13 上游配额感知
+
+网关单机能撑上万条连接，但真正的上限往往是**各家账号的配额**：每分钟的请求数、token 数，以及 MiMo Token Plan 这类套餐的总额度。等到上游返回 429 再切换，已经浪费了一次请求和一段等待时间。
+
+- **动态配额**：上游在响应头中返回剩余配额时（比如 OpenAI 的 `x-ratelimit-remaining-requests`、`x-ratelimit-remaining-tokens` 和对应的重置时间），每个 Worker 记录这个上游的最新剩余量
+- **静态配额**：上游不返回这类响应头时，在配置中填写已知的配额（`providers[].quota: { rpm, tpm }`），由网关自己计数
+- **路由时使用**：剩余配额低于阈值（默认 10%）的目标，在路由时被暂时跳过，流量分到下一个目标；配额重置后自动恢复
+- **只是“尽量避免”**：多个 Worker 各自估算剩余量，存在误差，所以仍然依靠 429 + 熔断兜底
+- MiniMax 和 MiMo 是否返回剩余配额的响应头，列入[验证清单](providers.md#5-验证清单)
+
 ---
 
 ## 7. 配置设计
@@ -640,7 +671,7 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 
   "keys": [
     { "id": "app-chatbot", "hash": "blake3:9f2c…", "budget": { "daily_usd": 20, "on_exceed": "reject" },
-      "limits": { "rpm": 600, "tpm": 200000 } }
+      "limits": { "rpm": 600, "tpm": 200000, "concurrency": 50 } }
   ],
 
   "providers": [
@@ -648,8 +679,11 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
       "max_connections": 256 },
     { "name": "minimax", "base_url": "https://api.minimaxi.com/v1",            "api_key_env": "MINIMAX_API_KEY",
       "error_mapping": { "field": "base_resp.status_code", "codes": { "1002": 429, "1004": 401, "1008": 402 } } },
-    { "name": "mimo",    "base_url": "https://token-plan-cn.xiaomimimo.com/v1", "api_key_env": "MIMO_API_KEY" }
+    { "name": "mimo",    "base_url": "https://token-plan-cn.xiaomimimo.com/v1", "api_key_env": "MIMO_API_KEY",
+      "quota": { "rpm": 60 } }
   ],
+  "proxy": { "https": "env", "per_provider": { "openai": "http://127.0.0.1:7890" } },
+  "accounting": { "timezone": "Asia/Shanghai" },
 
   "models": [
     { "name": "smart", "targets": [
@@ -697,10 +731,12 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 | 里程碑 | 时间 | 交付内容 | 验收标准 |
 |---|---|---|---|
 | **M1 原型与设计** | 第 1–2 周 | v0.1 原型；设计文档与分析图 | ✅ 已完成 |
-| **M2 性能底座** | 第 3–4 周 | 协程 demo → 接入层与上游层重写、连接池、背压、四种超时、异常隔离；扩展点接口与注册表；第一份压测报告 | 达到 1.5 中的并发和内存指标；有和原型的对比数据 |
-| **M3 稳定性与成本** | 第 5–6 周 | 重试规则、重试预算、熔断、舱壁隔离、事件循环看门狗、限流、费用核算、预算、TTFT 指标、Grafana 看板 | 故障注入测试全部通过 |
-| **M4 运维完善** | 第 7 周 | 热加载、过载保护、内存水位、降级、优雅退出、零停机升级、key 哈希、docker compose | 10 分钟内从零完成部署 |
-| **M5 发布** | 第 8 周 | 过载、长稳、混沌、升级测试；运维手册；v1.0 发布、压测报告、技术文章 | GitHub Release + Docker 镜像 |
+| **M2 性能底座** | 第 3–4 周 | 协程 demo → 接入层与上游层重写、连接池、出站代理、背压、四种超时、异常隔离；扩展点接口与注册表；依赖扫描与静态分析；第一份压测报告 | 达到 1.5 中的并发和内存指标；有和原型的对比数据 |
+| **M3 稳定性与成本** | 第 5–6 周 | 重试规则、重试预算、熔断、舱壁隔离、事件循环看门狗、限流与 key 并发上限、上游配额感知、费用核算、预算（原子持久化）、TTFT 指标、Grafana 看板；三家上游验证、SDK 兼容性测试 | 故障注入测试全部通过 |
+| **M4 运维完善** | 第 7 周 | 热加载、过载保护、内存水位、降级、优雅退出、零停机升级、key 哈希；双实例方案、docker compose / systemd / Kubernetes、系统参数检查；配置与部署文档 | 10 分钟内从零完成部署 |
+| **M5 发布** | 第 8 周 | 过载、长稳、混沌、升级测试；运维手册与上线演练；容量规划；v1.0 发布、压测报告、技术文章 |
+
+上线前的完整检查项见 [production-readiness.md](production-readiness.md)。 GitHub Release + Docker 镜像 |
 
 甘特图见 [diagrams.md 第 11 节](diagrams.md#11-甘特图)。
 
@@ -728,6 +764,7 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 | 2 | 超出预算时默认是拒绝还是降级？ | 用户体验 | 默认拒绝（402），降级作为可选项 |
 | 3 | 读取超时类的“不确定失败”是否允许用户配置为重试？ | 可用性和费用之间的取舍 | 允许，默认关闭 |
 | 4 | v1.0 是否需要 Admin API 的鉴权？ | 安全 | 需要：单独的 admin key，并且默认只监听 127.0.0.1 |
+| 5 | **部署在国内还是海外？** | 网络连通、延迟、合规 | 见 [production-readiness.md 第 0 节](production-readiness.md#0-待决定部署位置)；在决定之前，按“两种都支持”设计 |
 
 ### 11.2 需要补充的文档
 
