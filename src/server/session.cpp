@@ -45,13 +45,25 @@ Task<Session::ReadResult> Session::read_request(std::optional<Request>* out) {
     if (r.index() == 1 || std::get<0>(std::get<0>(r))) co_return ReadResult::kClose;
   }
 
-  // 2. 请求头：总时长不超过 read_timeout（防慢速攻击）
-  http::request_parser<http::string_body> parser;
+  Parser parser;
   parser.header_limit(kMaxHeaderBytes);
   parser.body_limit(cfg.max_body_bytes);
-  timer.expires_after(cfg.read_timeout);
+  if (co_await read_header_part(&parser, &timer) == ReadResult::kClose)
+    co_return ReadResult::kClose;
+  if (!parser.is_done() && co_await read_body_part(&parser, &timer) == ReadResult::kClose) {
+    co_return ReadResult::kClose;
+  }
+  *out = parser.release();
+  co_return ReadResult::kOk;
+}
+
+Task<Session::ReadResult> Session::read_header_part(Parser* parser_ptr, asio::steady_timer* timer) {
+  const auto& cfg = worker_->config->server;
+  Parser& parser = *parser_ptr;
+  // 2. 请求头：总时长不超过 read_timeout（防慢速攻击）
+  timer->expires_after(cfg.read_timeout);
   auto h =
-      co_await (http::async_read_header(socket_, buffer_, parser, kTuple) || timer_fired(&timer));
+      co_await (http::async_read_header(socket_, buffer_, parser, kTuple) || timer_fired(timer));
   if (h.index() == 1) {
     worker_->metrics->increment(Counter::kRejected, {"slow_request"});
     co_return ReadResult::kClose;  // 慢速攻击：直接关闭，不回复
@@ -65,10 +77,11 @@ Task<Session::ReadResult> Session::read_request(std::optional<Request>* out) {
       co_await reject_and_close(make_error(ErrorCode::kHeadersTooLarge, "请求头超过 64 KB"),
                                 "headers_too_large");
     } else if (ec == http::error::body_limit) {
+      // 请求头已经解析完：沿用客户端的请求 ID 和 HTTP 版本
       co_await reject_and_close(
           make_error(ErrorCode::kPayloadTooLarge,
                      "请求体超过上限 " + std::to_string(cfg.max_body_bytes) + " 字节"),
-          "too_large");
+          "too_large", std::string(parser.get()["X-Request-Id"]), parser.get().version());
     } else {
       co_await reject_and_close(
           make_error(ErrorCode::kInvalidRequest, "无法解析的 HTTP 请求：" + ec.message()),
@@ -77,37 +90,76 @@ Task<Session::ReadResult> Session::read_request(std::optional<Request>* out) {
     co_return ReadResult::kClose;
   }
 
-  // 3. 请求体：不限总时长，只要求持续有进展（32 MB 的图片在慢速网络上要传几十秒，是正常请求）
-  if (!parser.is_done()) {
-    SteadyClock::time_point last_activity = SteadyClock::now();
-    auto b = co_await (read_body(&parser, &last_activity) ||
-                       idle_watch(&timer, &last_activity, cfg.read_timeout));
-    if (b.index() == 1) {
-      worker_->metrics->increment(Counter::kRejected, {"slow_request"});
-      co_return ReadResult::kClose;
-    }
-    if (auto ec = std::get<0>(b); ec) {
-      if (ec == http::error::body_limit) {
-        co_await reject_and_close(
-            make_error(ErrorCode::kPayloadTooLarge,
-                       "请求体超过上限 " + std::to_string(cfg.max_body_bytes) + " 字节"),
-            "too_large");
-      }
-      co_return ReadResult::kClose;
-    }
+  // 分帧必须没有歧义（防请求走私）：Content-Length 与 Transfer-Encoding 同时出现、多个不同的
+  // Content-Length，Beast 已经拒绝；这里再拒绝 chunked 以外的任何传输编码
+  if (const auto te = parser.get()[http::field::transfer_encoding];
+      !te.empty() && !is_plain_chunked(te)) {
+    co_await reject_and_close(
+        make_error(ErrorCode::kInvalidRequest,
+                   "不支持的 Transfer-Encoding：" + std::string(te) + "（只支持 chunked）"),
+        "bad_request", std::string(parser.get()["X-Request-Id"]), parser.get().version());
+    co_return ReadResult::kClose;
   }
-  *out = parser.release();
   co_return ReadResult::kOk;
 }
 
-Task<beast::error_code> Session::read_body(http::request_parser<http::string_body>* parser,
-                                           SteadyClock::time_point* last_activity) {
+Task<Session::ReadResult> Session::read_body_part(Parser* parser_ptr, asio::steady_timer* timer) {
+  const auto& cfg = worker_->config->server;
+  Parser& parser = *parser_ptr;
+  // 3. 请求体：不限总时长（32 MB 的图片在慢速网络上要传几十秒，是正常请求），但要求持续有进展，
+  //    并且过了宽限期之后平均速度不低于 kMinBodyBytesPerSecond（否则每 9 秒发 1
+  //    个字节就能一直占住连接）
+  SteadyClock::time_point last_activity = SteadyClock::now();
+  auto b =
+      co_await (read_body(&parser, &last_activity) || body_watch(timer, &parser, &last_activity));
+  if (b.index() == 1) {
+    worker_->metrics->increment(Counter::kRejected, {"slow_request"});
+    co_return ReadResult::kClose;
+  }
+  if (auto ec = std::get<0>(b); ec) {
+    const std::string id(parser.get()["X-Request-Id"]);
+    if (ec == http::error::body_limit) {
+      co_await reject_and_close(
+          make_error(ErrorCode::kPayloadTooLarge,
+                     "请求体超过上限 " + std::to_string(cfg.max_body_bytes) + " 字节"),
+          "too_large", id, parser.get().version());
+    } else if (ec != http::error::partial_message && ec != asio::error::eof &&
+               ec != asio::error::connection_reset) {
+      // 畸形的分块编码等：回复 400（客户端断开则不回复）
+      co_await reject_and_close(
+          make_error(ErrorCode::kInvalidRequest, "无法解析的请求体：" + ec.message()),
+          "bad_request", id, parser.get().version());
+    }
+    co_return ReadResult::kClose;
+  }
+  co_return ReadResult::kOk;
+}
+
+Task<beast::error_code> Session::read_body(Parser* parser, SteadyClock::time_point* last_activity) {
   while (!parser->is_done()) {
     auto [ec, n] = co_await http::async_read_some(socket_, buffer_, *parser, kTuple);
     if (ec) co_return ec;
     *last_activity = SteadyClock::now();
   }
   co_return beast::error_code{};
+}
+
+Task<> Session::body_watch(asio::steady_timer* timer, const Parser* parser,
+                           const SteadyClock::time_point* last_activity) {
+  const auto grace = SteadyClock::duration(worker_->config->server.read_timeout);
+  const auto start = SteadyClock::now();
+  for (;;) {
+    // 每秒检查一次（只在读请求体期间，每个请求一个定时器，不在热路径上）
+    timer->expires_after(std::chrono::seconds(1));
+    if (auto [ec] = co_await timer->async_wait(kTuple); ec) co_return;
+    const auto now = SteadyClock::now();
+    if (now - *last_activity >= grace) co_return;  // 连续 read_timeout 没有任何数据
+    const double seconds = std::chrono::duration<double>(now - start - grace).count();
+    if (seconds > 0 &&
+        static_cast<double>(parser->get().body().size()) < kMinBodyBytesPerSecond * seconds) {
+      co_return;  // 过了宽限期之后，平均速度太慢
+    }
+  }
 }
 
 Task<bool> Session::handle(Request request) {
@@ -159,8 +211,11 @@ Task<bool> Session::write_json(unsigned status, std::string body, std::string re
   res.keep_alive(keep_alive);
   res.body() = std::move(body);
   res.prepare_payload();
-  auto [ec, n] = co_await http::async_write(socket_, res, kTuple);
-  co_return !ec;
+  // 与 write_timeout 竞速：客户端不读时，不能永远占住连接名额
+  asio::steady_timer timer(socket_.get_executor());
+  timer.expires_after(worker_->config->server.write_timeout);
+  auto r = co_await (http::async_write(socket_, res, kTuple) || timer_fired(&timer));
+  co_return r.index() == 0 && !std::get<0>(std::get<0>(r));
 }
 
 Task<bool> Session::write_error(Error error, std::string request_id, bool keep_alive,
@@ -171,9 +226,11 @@ Task<bool> Session::write_error(Error error, std::string request_id, bool keep_a
                                 std::move(error));
 }
 
-Task<> Session::reject_and_close(Error error, std::string reason_label) {
+Task<> Session::reject_and_close(Error error, std::string reason_label, std::string request_id,
+                                 unsigned version) {
   worker_->metrics->increment(Counter::kRejected, {reason_label});
-  co_await write_error(std::move(error), request_id({}, worker_->rng), false, 11);
+  co_await write_error(std::move(error), detail::request_id(request_id, worker_->rng), false,
+                       version == 10 ? 10 : 11);
   beast::error_code ignored;
   socket_.shutdown(tcp::socket::shutdown_send, ignored);
   // 丢弃对方还在发送的数据（最多 kDrainTime），让对方先读到我们的回复
@@ -197,12 +254,16 @@ Task<> reject_overloaded(tcp::socket socket, WorkerContext* worker) {
                     .retry_after = std::chrono::seconds(1)};
   http::response<http::string_body> res{http::status::service_unavailable, 11};
   res.set(http::field::content_type, "application/json");
+  res.set("X-Request-Id", request_id({}, worker->rng));
   res.set("x-should-retry", "true");
   res.set(http::field::retry_after, "1");
+  res.set("retry-after-ms", "1000");
   res.keep_alive(false);
   res.body() = error_body(error);
   res.prepare_payload();
-  co_await http::async_write(socket, res, kTuple);
+  asio::steady_timer timer(socket.get_executor());  // 客户端不读时最多等 write_timeout
+  timer.expires_after(worker->config->server.write_timeout);
+  co_await (http::async_write(socket, res, kTuple) || timer_fired(&timer));
   beast::error_code ignored;
   socket.shutdown(tcp::socket::shutdown_both, ignored);
 }

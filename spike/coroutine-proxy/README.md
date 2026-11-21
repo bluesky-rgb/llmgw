@@ -32,6 +32,8 @@ co_await (pump(st) || client_closed(client_) || timer_fired(deadline) || idle_wa
 
 `pump` 是读上游、写客户端的拉取循环；另外三个分别等待客户端断开、总超时、空闲超时。谁先结束就按谁处理，其余的由 Asio 自动取消。
 
+> ⚠️ 后来发现的限制：这只对**正常结束**的分支成立，抛异常的分支不会结束竞速（`||` 是 `wait_for_one_success`）。正式实现（`src/server/relay.cpp`）在竞速分支内部捕获全部异常，见 ADR-006 的补充。这份 demo 代码保持原样，作为当时验证的记录。
+
 ## 构建
 
 Boost 不在默认构建中，需要打开 `LLMGW_BUILD_SPIKE`：

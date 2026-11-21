@@ -47,6 +47,8 @@ struct ServerConfig {
   /// 防慢速攻击：读完请求头的最长时间；读请求体时，连续这么久收不到数据就断开
   Seconds read_timeout{10};
   Seconds keep_alive_timeout{60};  ///< 长连接上两个请求之间的最长空闲时间
+  /// 写一次响应（一个数据块）给客户端的最长时间：客户端不读时，超过这个时间断开，释放连接名额
+  Seconds write_timeout{60};
 };
 
 /// 超时（design.md 6.3）。都是正整数秒。

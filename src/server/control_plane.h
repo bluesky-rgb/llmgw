@@ -37,8 +37,12 @@ class ControlPlane {
   Task<> accept_loop(tcp::acceptor* acceptor, Plane plane);
   Task<> serve(tcp::socket socket, Plane plane);
 
+  /// 控制面的并发连接上限：探针和 Prometheus 的连接很少；不设上限的话，打开大量连接就能耗尽 fd
+  static constexpr int kMaxConnections = 128;
+
   std::shared_ptr<const config::Snapshot> config_;
   const SharedState* shared_;
+  int connections_ = 0;  ///< 只在控制面线程上访问
   asio::io_context ioc_{1};
   std::optional<tcp::acceptor> admin_;
   std::optional<tcp::acceptor> observability_;

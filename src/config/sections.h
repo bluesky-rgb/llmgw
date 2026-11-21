@@ -35,7 +35,7 @@ bool is_loopback(std::string_view host);
 ServerConfig read_server(ObjectReader r);
 Timeouts read_timeouts(ObjectReader r);
 Provider read_provider(ObjectReader r);
-ProxyConfig read_proxy(ObjectReader r, const EnvLookup& getenv);
+ProxyConfig read_proxy(ObjectReader r, const EnvLookup& getenv, bool resolve_env);
 ModelConfig read_model(ObjectReader r, const Timeouts& global);
 
 }  // namespace llmgw::config::detail

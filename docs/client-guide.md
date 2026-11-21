@@ -1,6 +1,8 @@
 # 客户端接入指南
 
 > 本文面向**使用网关的应用开发者**。设计层面的说明见 [design.md 3.6 节](design.md#36-客户端交互与接口契约)。
+>
+> **版本说明：** 本文描述的是 **v1.0 的接口约定**。目前可以运行的是 v0.1 原型（用法见 [usage.md](usage.md)），新架构正在开发中（进度见 [roadmap.md](roadmap.md)）。新架构中已经实现的部分：`/v1/chat/completions`、`/v1/models`、错误格式与 `x-should-retry`（第 7 节）、`X-Request-Id`。尚未实现：鉴权（v0.3）、`X-LLMGW-*` 响应头、额度响应头、`/v1/llmgw/usage`。
 
 ![客户端如何与网关交互](images/15-client-planes.svg)
 

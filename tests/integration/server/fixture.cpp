@@ -14,7 +14,7 @@ Error make_error(ErrorCode code, std::string message,
 // 按脚本输出数据块：每块之前等待 interval；脚本结束后可以出错、正常结束或一直等待
 class FakeStream final : public ResponseStream {
  public:
-  enum class End : std::uint8_t { kOk, kError, kHang };
+  enum class End : std::uint8_t { kOk, kError, kHang, kThrow };
   FakeStream(ResponseHead head, std::deque<std::string> chunks, std::chrono::milliseconds interval,
              End end, std::shared_ptr<Probe> probe)
       : head_(std::move(head)),
@@ -38,6 +38,7 @@ class FakeStream final : public ResponseStream {
     if (chunks_.empty()) {
       if (end_ == End::kError)
         co_return fail(make_error(ErrorCode::kUpstreamUnavailable, "upstream closed"));
+      if (end_ == End::kThrow) throw std::runtime_error("next() boom");
       if (end_ == End::kHang) {
         t.expires_at(asio::steady_timer::time_point::max());
         co_await t.async_wait(kTuple);
@@ -87,6 +88,17 @@ Task<Result<std::unique_ptr<ResponseStream>>> FakeDispatcher::dispatch(RequestCo
   if (m == "stall") co_return make(sse(1), std::chrono::milliseconds(0), End::kHang);
   if (m == "midfail") co_return make(sse(2), std::chrono::milliseconds(0), End::kError);
   if (m == "big") co_return make(sse(200, 64 * 1024), std::chrono::milliseconds(0), End::kOk);
+  if (m == "inject") {  // 上游返回带 CR/LF 的响应头：不能被原样转发给客户端（响应头注入）
+    head.headers.push_back({"x-evil", "a\r\nSet-Cookie: pwned=1"});
+    head.headers.push_back({"x-bad name", "v"});
+    co_return make(sse(1), std::chrono::milliseconds(0), End::kOk);
+  }
+  if (m == "medium") co_return make(sse(5), std::chrono::milliseconds(50), End::kOk);
+  if (m == "nextthrow") co_return make(sse(1), std::chrono::milliseconds(0), End::kThrow);
+  if (m == "badstatus") {
+    head.status = 1000;
+    co_return make(sse(1), std::chrono::milliseconds(0), End::kOk);
+  }
   if (m == "worker") {
     head.headers.push_back({"x-worker", std::to_string(info_.index)});
     co_return make(sse(1), std::chrono::milliseconds(0), End::kOk);
@@ -117,6 +129,7 @@ std::shared_ptr<config::Snapshot> test_config() {
   cfg->server.max_body_bytes = 64 * 1024;
   cfg->server.read_timeout = std::chrono::seconds(1);
   cfg->server.keep_alive_timeout = std::chrono::seconds(1);
+  cfg->server.write_timeout = std::chrono::seconds(1);
   cfg->timeouts.idle = std::chrono::seconds(1);
   cfg->timeouts.total = std::chrono::seconds(2);
   cfg->models.push_back({.name = "smart", .targets = {}});
@@ -165,6 +178,57 @@ void Client::send(const std::string& raw) {
   auto ec =
       run([&](auto handler) { asio::async_write(socket_, asio::buffer(raw), handler); }, timeout_);
   ASSERT_FALSE(ec) << "发送失败：" << ec.message();
+}
+
+bool Client::try_send(const std::string& raw) {
+  return !run([&](auto handler) { asio::async_write(socket_, asio::buffer(raw), handler); },
+              timeout_);
+}
+
+std::string Client::read_some(std::size_t max) {
+  if (buffer_.size() > 0) {
+    const auto n = std::min(max, buffer_.size());
+    std::string out(static_cast<const char*>(buffer_.data().data()), n);
+    buffer_.consume(n);
+    return out;
+  }
+  std::string out(max, '\0');
+  std::size_t got = 0;
+  auto ec = run(
+      [&](auto handler) {
+        socket_.async_read_some(asio::buffer(out),
+                                [&, handler](beast::error_code e, std::size_t n) mutable {
+                                  got = n;
+                                  handler(e, n);
+                                });
+      },
+      timeout_);
+  out.resize(ec ? 0 : got);
+  return out;
+}
+
+std::string Client::read_until_close_or(std::chrono::milliseconds within) {
+  std::string out(static_cast<const char*>(buffer_.data().data()), buffer_.size());
+  buffer_.consume(buffer_.size());
+  const auto deadline = Clock::now() + within;
+  std::array<char, 8192> buf{};
+  for (;;) {
+    const auto left =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
+    if (left.count() <= 0) return out;
+    std::size_t got = 0;
+    auto ec = run(
+        [&](auto handler) {
+          socket_.async_read_some(asio::buffer(buf),
+                                  [&, handler](beast::error_code e, std::size_t n) mutable {
+                                    got = n;
+                                    handler(e, n);
+                                  });
+        },
+        left);
+    out.append(buf.data(), got);
+    if (ec) return out;
+  }
 }
 
 void Client::post_chat(const std::string& model, bool stream, const std::string& extra_headers) {

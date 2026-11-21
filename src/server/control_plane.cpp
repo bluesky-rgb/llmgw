@@ -79,11 +79,22 @@ void ControlPlane::stop() {
 }
 
 Task<> ControlPlane::accept_loop(tcp::acceptor* acceptor, Plane plane) {
+  asio::steady_timer backoff(ioc_);
   for (;;) {
     auto [ec, socket] = co_await acceptor->async_accept(kTuple);
     if (ec == asio::error::operation_aborted) co_return;
-    if (ec) continue;
-    asio::co_spawn(ioc_, serve(std::move(socket), plane), report);
+    if (ec) {
+      // 比如文件描述符用完：稍等再试。不等的话控制面线程会空转占满一个核（独立审查发现）
+      backoff.expires_after(std::chrono::milliseconds(10));
+      co_await backoff.async_wait(kTuple);
+      continue;
+    }
+    if (connections_ >= kMaxConnections) continue;  // 超过上限：socket 析构时直接关闭
+    ++connections_;
+    asio::co_spawn(ioc_, serve(std::move(socket), plane), [this](const std::exception_ptr& e) {
+      --connections_;
+      report(e);
+    });
   }
 }
 
@@ -120,7 +131,8 @@ Task<> ControlPlane::serve(tcp::socket socket, Plane plane) {
     not_found("管理接口将在 v0.4 中提供（任务 3.x）");
   }
   res.prepare_payload();
-  co_await http::async_write(socket, res, kTuple);
+  timer.expires_after(config_->server.write_timeout);  // 客户端不读时不能永远占住连接
+  co_await (http::async_write(socket, res, kTuple) || timer_fired(&timer));
   beast::error_code ignored;
   socket.shutdown(tcp::socket::shutdown_both, ignored);
 }

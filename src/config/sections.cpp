@@ -147,6 +147,7 @@ ServerConfig read_server(ObjectReader r) {
   }
   if (auto v = r.integer("read_timeout", 1, 3600)) s.read_timeout = Seconds(*v);
   if (auto v = r.integer("keep_alive_timeout", 1, 3600)) s.keep_alive_timeout = Seconds(*v);
+  if (auto v = r.integer("write_timeout", 1, 3600)) s.write_timeout = Seconds(*v);
   r.finish();
 
   const std::array<std::pair<const char*, std::uint16_t>, 3> ports{
@@ -227,16 +228,21 @@ Provider read_provider(ObjectReader r) {
   return p;
 }
 
-ProxyConfig read_proxy(ObjectReader r, const EnvLookup& getenv) {
+ProxyConfig read_proxy(ObjectReader r, const EnvLookup& getenv, bool resolve_env) {
   ProxyConfig proxy;
   if (auto v = r.string("https")) {
     std::string text = *v;
-    std::string source = "\"" + text + "\"";
+    // 错误信息中只说明来源，不回显代理地址：代理地址中可能带有用户名和密码（独立审查发现）
+    std::string source = "代理地址";
     if (text == "env") {
-      auto env = getenv("HTTPS_PROXY");
-      if (!env || env->empty()) env = getenv("https_proxy");
+      // --skip-env 时不读取任何环境变量（与 LoadOptions::resolve_env 的约定一致）
+      std::optional<std::string> env;
+      if (resolve_env) {
+        env = getenv("HTTPS_PROXY");
+        if (!env || env->empty()) env = getenv("https_proxy");
+      }
       text = env.value_or("");
-      source = "环境变量 HTTPS_PROXY 的值 \"" + text + "\"";
+      source = "环境变量 HTTPS_PROXY 中的代理地址";
     }
     if (!text.empty()) {
       if (auto url = parse_url(text)) {

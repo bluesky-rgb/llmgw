@@ -176,6 +176,13 @@ LoadReport parse(std::string_view json_text, const LoadOptions& options) {
     diag.error(line_col(json_text, e.byte > 0 ? e.byte - 1 : 0), "JSON 语法错误：" + detail);
     report.issues = std::move(diag.issues());
     return report;
+  } catch (const Json::exception& e) {
+    // 比如数字溢出（1e999）：nlohmann 抛出的是 out_of_range，不带位置信息（模糊测试发现）
+    std::string detail = e.what();
+    if (auto pos = detail.find("] "); pos != std::string::npos) detail = detail.substr(pos + 2);
+    diag.error("（整个文件）", "JSON 中的数字超出范围或无法表示：" + detail);
+    report.issues = std::move(diag.issues());
+    return report;
   }
 
   auto snapshot = std::make_shared<Snapshot>();
@@ -185,7 +192,9 @@ LoadReport parse(std::string_view json_text, const LoadOptions& options) {
     if (auto r = top.object("timeouts")) snapshot->timeouts = detail::read_timeouts(std::move(*r));
     read_array(top, "providers", &snapshot->providers,
                [](ObjectReader r) { return detail::read_provider(std::move(r)); });
-    if (auto r = top.object("proxy")) snapshot->proxy = detail::read_proxy(std::move(*r), getenv);
+    if (auto r = top.object("proxy")) {
+      snapshot->proxy = detail::read_proxy(std::move(*r), getenv, options.resolve_env);
+    }
     const Timeouts global = snapshot->timeouts;
     read_array(top, "models", &snapshot->models,
                [&](ObjectReader r) { return detail::read_model(std::move(r), global); });

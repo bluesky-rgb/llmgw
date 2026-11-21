@@ -15,6 +15,7 @@ option(LLMGW_BUILD_TESTS "构建 tests/" ON)
 option(LLMGW_BUILD_PROTOTYPE "构建 prototype/（v0.1 原型，作为性能对照组）" ON)
 option(LLMGW_WARNINGS_AS_ERRORS "新模块把编译警告视为错误" ON)
 option(LLMGW_BUILD_SPIKE "构建 spike/（技术验证代码，默认关闭，避免 CI 每次下载 Boost）" OFF)
+option(LLMGW_BUILD_FUZZ "构建 tests/fuzz/（模糊测试，默认关闭；Clang 下使用 libFuzzer）" OFF)
 
 include(cmake/Dependencies.cmake)
 include(cmake/LlmgwModule.cmake)
@@ -31,6 +32,10 @@ endif()
 
 if(LLMGW_BUILD_PROTOTYPE)
   add_subdirectory(prototype)
+endif()
+
+if(LLMGW_BUILD_FUZZ)
+  add_subdirectory(tests/fuzz)
 endif()
 
 if(LLMGW_BUILD_SPIKE)

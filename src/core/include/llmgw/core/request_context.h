@@ -114,14 +114,19 @@ struct Outcome {
   std::optional<ErrorCode> error;  ///< 网关自己产生的错误（如果有）
 };
 
-/// 一个请求的上下文。只能移动，不能复制：一个请求只有一份上下文。
+/// 一个请求的上下文。不能复制，也不能移动：一个请求只有一份上下文，由 Session 在自己的栈帧中
+/// 原地创建，其他模块通过指针访问。
+///
+/// 为什么不能移动：request 是 const 成员，“移动”实际上会退化成复制，32 MB 的请求体会被整份
+/// 复制一次（独立审查发现）。干脆禁止，任何需要移动的写法都会在编译时失败。
+/// 返回 prvalue 的工厂函数仍然可以使用（C++17 保证的复制省略）。
 struct RequestContext {
   RequestContext(RequestInfo info, std::shared_ptr<const config::Snapshot> snapshot)
       : request(std::move(info)), config(std::move(snapshot)) {}
   RequestContext(const RequestContext&) = delete;
   RequestContext& operator=(const RequestContext&) = delete;
-  RequestContext(RequestContext&&) = default;
-  RequestContext& operator=(RequestContext&&) = delete;  // const 成员不能重新赋值
+  RequestContext(RequestContext&&) = delete;
+  RequestContext& operator=(RequestContext&&) = delete;
   ~RequestContext() = default;
 
   const RequestInfo request;                             ///< 写入者：Session（创建时）

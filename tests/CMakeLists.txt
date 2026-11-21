@@ -61,7 +61,9 @@ llmgw_cli_test(check_never_prints_api_key ARGS "check|-c|${bad}" EXPECT 1 REQUIR
 add_executable(llmgw_integration_tests
   integration/server/fixture.cpp
   integration/server/basic_test.cpp
-  integration/server/limits_test.cpp)
+  integration/server/limits_test.cpp
+  integration/server/security_test.cpp
+  integration/server/review_test.cpp)
 target_link_libraries(llmgw_integration_tests PRIVATE GTest::gtest_main llmgw::server Boost::beast)
 target_compile_options(llmgw_integration_tests PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>

@@ -48,6 +48,17 @@ Server::Server(ServerOptions options) : impl_(std::make_unique<Impl>()) {
 Server::~Server() { stop(); }
 
 Result<void> Server::start() {
+  if (impl_->started) return fail(ErrorCode::kInternal, "Server 已经启动过了");
+  auto r = start_impl();
+  if (!r) {
+    // 启动失败：释放已经绑定的端口和创建的 Worker，不留下半启动的状态
+    impl_->workers.clear();
+    impl_->control.reset();
+  }
+  return r;
+}
+
+Result<void> Server::start_impl() {
   auto& o = impl_->options;
   if (!o.config || !o.dispatcher_factory)
     return fail(ErrorCode::kInternal, "ServerOptions 缺少 config 或 dispatcher_factory");

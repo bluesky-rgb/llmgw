@@ -51,6 +51,10 @@ class ConnectionGuard {
 
 using Request = http::request<http::string_body>;
 
+/// 请求体的最低平均速度（过了 read_timeout 的宽限期之后）：16 KB/s，约 128 kbps。
+/// 网关的客户端通常是服务端程序，正常的上传远快于这个速度；慢速攻击者要占住一个连接就必须持续付出流量。
+inline constexpr double kMinBodyBytesPerSecond = 16.0 * 1024;
+
 class Session {
  public:
   /// 调用者已经把连接计入 shared->connections；guard 负责在结束时减去。
@@ -63,8 +67,15 @@ class Session {
   enum class ReadResult : std::uint8_t { kOk, kClose };
   // 读一个完整的请求。出错时已经回复了错误（或者按规则不回复），返回 kClose。
   Task<ReadResult> read_request(std::optional<Request>* out);
-  Task<beast::error_code> read_body(http::request_parser<http::string_body>* parser,
-                                    SteadyClock::time_point* last_activity);
+  using Parser = http::request_parser<http::string_body>;
+  // read_request 的两个阶段：请求头（总时长不超过 read_timeout）、请求体（要求持续有进展）
+  Task<ReadResult> read_header_part(Parser* parser, asio::steady_timer* timer);
+  Task<ReadResult> read_body_part(Parser* parser, asio::steady_timer* timer);
+  Task<beast::error_code> read_body(Parser* parser, SteadyClock::time_point* last_activity);
+  /// 读请求体时的看门狗：连续 read_timeout 没有数据，或者（过了 read_timeout 的宽限之后）
+  /// 平均速度低于 kMinBodyBytesPerSecond，就返回（慢速攻击，独立审查发现）
+  Task<> body_watch(asio::steady_timer* timer, const Parser* parser,
+                    const SteadyClock::time_point* last_activity);
   // 处理一个请求，返回连接能否继续复用
   Task<bool> handle(Request request);
   Task<bool> handle_chat(Request request, std::string request_id);
@@ -72,22 +83,34 @@ class Session {
   // ---- relay.cpp ----
   struct Exchange;
   enum class PumpResult : std::uint8_t { kDone, kStreamError, kClientError };
+  enum class WatchdogFired : std::uint8_t { kUpstreamIdle, kClientWrite };
+  // 竞速的分支绝不能抛异常：a || b 是 wait_for_one_success，抛异常的分支不会结束竞速，
+  // 而是被悄悄吞掉、一直等到别的分支“成功”（独立审查发现）。所以 relay、pump 内部捕获全部异常。
   Task<bool> relay(Exchange* ex);
+  Task<bool> respond(Exchange* ex, Result<std::unique_ptr<ResponseStream>> dispatched);
   Task<PumpResult> pump(Exchange* ex, ResponseStream* stream);
+  // 取下一块数据；ResponseStream 抛出的异常转换成错误（按上游中途出错处理）
+  Task<Result<std::optional<Chunk>>> pull(Exchange* ex, ResponseStream* stream);
+  Task<WatchdogFired> watchdog(Exchange* ex, asio::steady_timer* timer);
   Task<bool> write_head(Exchange* ex, const ResponseHead* head);
   // data 必须在 co_await 期间有效：调用方总是立即 co_await，数据在调用方的栈帧里
-  Task<bool> write_chunk(const Exchange* ex, std::string_view data);
-  Task<bool> finish_body(const Exchange* ex);
+  Task<bool> write_chunk(Exchange* ex, std::string_view data);
+  Task<bool> finish_body(Exchange* ex);
+  /// 响应头已经发出之后超时：流式请求在没有写到一半的数据块时，尽量发送一条 SSE 错误事件并结束
+  Task<> try_end_with_error_event(Exchange* ex, Error error);
 
   // ---- 响应 ----
   /// 写一个完整的响应（JSON），返回是否写成功。
-  // 协程参数一律按值传递（code-architecture.md 3.4）
+  // 协程参数一律按值传递（code-architecture.md 3.4）。每次写都与 write_timeout 竞速：
+  // 客户端不读时不能永远占住连接名额（独立审查发现的严重问题）
   Task<bool> write_json(unsigned status, std::string body, std::string request_id, bool keep_alive,
                         unsigned version, std::optional<Error> error = std::nullopt);
   Task<bool> write_error(Error error, std::string request_id, bool keep_alive, unsigned version);
   /// 回复错误后关闭连接：先关闭写方向，再丢弃对方还在发送的数据一小段时间，
   /// 避免直接关闭导致内核发送 RST、客户端收不到我们的回复（比如 413 时对方还在上传请求体）。
-  Task<> reject_and_close(Error error, std::string reason_label);
+  /// request_id、version：请求头已经解析出来时沿用客户端的请求 ID 和 HTTP 版本
+  Task<> reject_and_close(Error error, std::string reason_label, std::string request_id = {},
+                          unsigned version = 11);
 
   tcp::socket socket_;
   beast::flat_buffer buffer_;  ///< 跨请求保留：管线化时可能已经读到了下一个请求的开头
