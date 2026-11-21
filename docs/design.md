@@ -378,7 +378,7 @@ OpenAI 官方 SDK 默认会对连接错误、408、409、429 和所有 5xx 自�
 | 限流、网关过载 | 429、503 | `true`，带 `Retry-After` | 等一会儿就能成功 |
 | 所有上游都失败了 | 502 | `true`，`Retry-After` 至少 5 秒 | 网关已经尽力切换过；延迟重试给上游留出恢复时间，配合重试预算避免放大 |
 | **结果不确定，上游可能已经计费** | 504 | **`false`** | 防止重复扣费，由业务决定是否重新发起 |
-| 网关内部错误 | 500 | `true` | 网关自身的偶发问题，重试通常能成功 |
+| 网关内部错误 | 500 | **`false`** | 网关出错时请求可能已经发到上游并开始计费，自动重试可能付两次钱（任务 1.3 修正：初稿写的是 `true`，与 core 和 client-guide 矛盾） |
 
 **v1.x：利用幂等键去重。** 官方 SDK 重试时会带上同一个幂等键。网关可以记住“这个幂等键对应的请求正在处理中或者刚刚完成”：正在处理就让重试等待同一个结果，刚完成就直接返回缓存的结果（仅非流式）。这样客户端因为网络抖动重试时，也不会重复调用上游。
 
@@ -707,11 +707,14 @@ Session 协程里的转发循环是“**读上游一块 → 写给客户端 → 
 
 | 状态码 | `code` | 场景 |
 |---|---|---|
-| 400 | `invalid_request` / `invalid_json` | 请求格式错误 |
+| 400 | `invalid_request` | 请求格式错误（包括请求体不是合法的 JSON；具体原因写在 `message` 中） |
 | 401 | `invalid_api_key` | 鉴权失败 |
 | 402 | `budget_exceeded` | 超出预算 |
 | 404 | `model_not_found` | 模型未配置 |
+| 404 | `not_found` | 路径不存在 |
+| 405 | `method_not_allowed` | 请求方法不对 |
 | 413 | `payload_too_large` | 请求体过大 |
+| 431 | `headers_too_large` | 请求头过大（超过 64 KB） |
 | 429 | `rate_limited` | 超出限流 |
 | 502 | `upstream_unavailable` | 所有上游都失败了 |
 | 503 | `overloaded` | 网关过载 |
@@ -755,7 +758,8 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 ```json
 {
   "server": { "host": "0.0.0.0", "port": 8080, "admin_listen": "127.0.0.1:9090", "observability_listen": "0.0.0.0:9100",
-              "workers": 0, "max_connections": 10000 },
+              "workers": 0, "max_connections": 10000, "max_body_bytes": 33554432,
+              "read_timeout": 10, "keep_alive_timeout": 60 },
   "timeouts": { "connect": 10, "first_byte": 60, "first_byte_non_stream": 300, "idle": 60, "total": 600 },
 
   "keys": [

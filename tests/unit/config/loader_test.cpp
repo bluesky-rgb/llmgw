@@ -87,6 +87,7 @@ TEST(LoadExample, example_config_is_valid_and_fully_parsed) {
 
   EXPECT_EQ(s.server.port, 8080);
   EXPECT_EQ(s.server.admin, (Endpoint{.host = "127.0.0.1", .port = 9090}));
+  EXPECT_EQ(s.server.max_body_bytes, 32U << 20);
   ASSERT_EQ(s.providers.size(), 3U);
   EXPECT_EQ(s.find_provider("openai")->api_key, "k1");
   EXPECT_EQ(s.find_provider("mimo")->base_url.host, "token-plan-cn.xiaomimimo.com");
@@ -117,6 +118,9 @@ TEST(LoadDefaults, missing_sections_use_design_defaults) {
   EXPECT_EQ(s.server.port, 8080);
   EXPECT_EQ(s.server.observability.port, 9100);
   EXPECT_EQ(s.server.workers, 0U);
+  EXPECT_EQ(s.server.max_body_bytes, 32U << 20);
+  EXPECT_EQ(s.server.read_timeout, Seconds(10));
+  EXPECT_EQ(s.server.keep_alive_timeout, Seconds(60));
   EXPECT_EQ(s.timeouts, Timeouts{});
   EXPECT_EQ(s.timeouts.first_byte_non_stream, Seconds(300));
   EXPECT_FALSE(s.proxy.https.has_value());
@@ -144,6 +148,10 @@ TEST(Rules, server_ports_ranges_and_conflicts) {
   expect_error(minimal(R"(, "server": {"port": 9100})"), "server.observability_listen", "相同");
   expect_error(minimal(R"(, "server": {"workers": 2000})"), "server.workers", "1024");
   expect_error(minimal(R"(, "server": {"max_connections": 0})"), "server.max_connections");
+  expect_error(minimal(R"(, "server": {"max_body_bytes": 100})"), "server.max_body_bytes", "1024");
+  expect_error(minimal(R"(, "server": {"read_timeout": 0})"), "server.read_timeout");
+  expect_error(minimal(R"(, "server": {"keep_alive_timeout": 7200})"), "server.keep_alive_timeout",
+               "3600");
   expect_error(minimal(R"(, "server": {"admin_listen": "127.0.0.1"})"), "server.admin_listen",
                "端口");
   expect_warning(minimal(R"(, "server": {"admin_listen": "0.0.0.0:9090"})"), "server.admin_listen",

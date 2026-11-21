@@ -41,6 +41,13 @@
       "license": "CC0-1.0",
       "used_by": "core（Result<T>，见 ADR-007）",
       "header_only": true
+    },
+    "simdjson": {
+      "repo": "https://github.com/simdjson/simdjson.git",
+      "tag": "v5.2.0",
+      "license": "Apache-2.0 OR MIT",
+      "used_by": "server（热路径上从请求体中取 model、stream；任务 1.3 实测比 nlohmann 快 60–100 倍）",
+      "header_only": false
     }
   }
 }

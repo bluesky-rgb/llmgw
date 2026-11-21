@@ -5,7 +5,10 @@
     "admin_listen": "127.0.0.1:9090",
     "observability_listen": "0.0.0.0:9100",
     "workers": 0,
-    "max_connections": 10000
+    "max_connections": 10000,
+    "max_body_bytes": 33554432,
+    "read_timeout": 10,
+    "keep_alive_timeout": 60
   },
   "timeouts": { "connect": 10, "first_byte": 60, "first_byte_non_stream": 300, "idle": 60, "total": 600 },
 

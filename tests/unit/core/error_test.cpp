@@ -15,20 +15,24 @@ struct Row {
   int status;
   std::string_view name;
   bool retry;
+  std::string_view type;
 };
 
-// 与 client-guide.md 第 7 节一致（500 internal_error 在任务 0.4 中补充）
+// 与 client-guide.md 第 7 节一致（500 在 0.4 中补充；404 not_found、405、431 在 1.3 中补充）
 constexpr Row kClientGuideTable[] = {
-    {ErrorCode::kInvalidRequest, 400, "invalid_request", false},
-    {ErrorCode::kInvalidApiKey, 401, "invalid_api_key", false},
-    {ErrorCode::kBudgetExceeded, 402, "budget_exceeded", false},
-    {ErrorCode::kModelNotFound, 404, "model_not_found", false},
-    {ErrorCode::kPayloadTooLarge, 413, "payload_too_large", false},
-    {ErrorCode::kRateLimited, 429, "rate_limited", true},
-    {ErrorCode::kInternal, 500, "internal_error", false},
-    {ErrorCode::kUpstreamUnavailable, 502, "upstream_unavailable", true},
-    {ErrorCode::kOverloaded, 503, "overloaded", true},
-    {ErrorCode::kUpstreamTimeout, 504, "upstream_timeout", false},
+    {ErrorCode::kInvalidRequest, 400, "invalid_request", false, "invalid_request_error"},
+    {ErrorCode::kInvalidApiKey, 401, "invalid_api_key", false, "authentication_error"},
+    {ErrorCode::kBudgetExceeded, 402, "budget_exceeded", false, "invalid_request_error"},
+    {ErrorCode::kModelNotFound, 404, "model_not_found", false, "invalid_request_error"},
+    {ErrorCode::kNotFound, 404, "not_found", false, "invalid_request_error"},
+    {ErrorCode::kMethodNotAllowed, 405, "method_not_allowed", false, "invalid_request_error"},
+    {ErrorCode::kPayloadTooLarge, 413, "payload_too_large", false, "invalid_request_error"},
+    {ErrorCode::kRateLimited, 429, "rate_limited", true, "rate_limit_error"},
+    {ErrorCode::kHeadersTooLarge, 431, "headers_too_large", false, "invalid_request_error"},
+    {ErrorCode::kInternal, 500, "internal_error", false, "server_error"},
+    {ErrorCode::kUpstreamUnavailable, 502, "upstream_unavailable", true, "upstream_error"},
+    {ErrorCode::kOverloaded, 503, "overloaded", true, "server_error"},
+    {ErrorCode::kUpstreamTimeout, 504, "upstream_timeout", false, "upstream_error"},
 };
 
 TEST(ErrorCode, matches_client_guide_table) {
@@ -37,6 +41,7 @@ TEST(ErrorCode, matches_client_guide_table) {
     EXPECT_EQ(http_status(row.code), row.status);
     EXPECT_EQ(code_name(row.code), row.name);
     EXPECT_EQ(should_retry(row.code), row.retry);
+    EXPECT_EQ(error_type(row.code), row.type);
   }
 }
 

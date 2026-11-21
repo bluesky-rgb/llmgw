@@ -124,8 +124,11 @@ LangChain、LlamaIndex、Dify、各类 IDE 插件等，只要支持“自定义 
 | 401 | `invalid_api_key` | `false` | 检查网关 key |
 | 402 | `budget_exceeded` | `false` | 预算用完了，联系管理员 |
 | 404 | `model_not_found` | `false` | 检查模型名，或调用 `/v1/models` 查询 |
+| 404 | `not_found` | `false` | 路径不存在，检查 `base_url`（应该以 `/v1` 结尾） |
+| 405 | `method_not_allowed` | `false` | 请求方法不对，比如用 GET 调用了 `/v1/chat/completions` |
 | 413 | `payload_too_large` | `false` | 缩小请求 |
 | 429 | `rate_limited` | `true`，带 `Retry-After` | SDK 会自动等待后重试 |
+| 431 | `headers_too_large` | `false` | 请求头超过 64 KB，减少自定义请求头 |
 | 500 | `internal_error` | **`false`** | 网关自身的错误。请求可能已经发到上游，**不要自动重试**；请把 `X-Request-Id` 提供给管理员 |
 | 502 | `upstream_unavailable` | `true`，带 `Retry-After`（至少 5 秒） | 网关已经尝试过所有上游；SDK 会延迟后重试 |
 | 503 | `overloaded` | `true`，带 `Retry-After` | 网关繁忙，SDK 会自动等待后重试 |

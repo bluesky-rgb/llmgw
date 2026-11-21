@@ -13,10 +13,11 @@ add_executable(llmgw_unit_tests
   unit/core/metrics_test.cpp
   unit/config/syntax_test.cpp
   unit/config/json_reader_test.cpp
-  unit/config/loader_test.cpp)
-target_link_libraries(llmgw_unit_tests PRIVATE GTest::gtest_main llmgw::core llmgw::config)
+  unit/config/loader_test.cpp
+  unit/server/http_util_test.cpp)
+target_link_libraries(llmgw_unit_tests PRIVATE GTest::gtest_main llmgw::core llmgw::config llmgw::server)
 # 单元测试可以测试模块内部的组件（比如 config 的 json_reader.h），所以能看到 src/<模块>/ 下的私有头文件
-target_include_directories(llmgw_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/config")
+target_include_directories(llmgw_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/config" "${CMAKE_SOURCE_DIR}/src/server")
 llmgw_fetch_dependency(nlohmann_json)
 target_include_directories(llmgw_unit_tests SYSTEM PRIVATE "${nlohmann_json_SOURCE_DIR}/single_include")
 target_compile_definitions(llmgw_unit_tests PRIVATE LLMGW_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -55,3 +56,14 @@ llmgw_cli_test(unknown_argument_exits_2 ARGS "check|--bogus" EXPECT 2 REQUIRE "�
 # 密钥不能出现在 check 的任何输出中（配置有错误时也一样）
 llmgw_cli_test(check_never_prints_api_key ARGS "check|-c|${bad}" EXPECT 1 REQUIRE "bad.json"
                FORBID "sk-VERY-SECRET" ENV "OPENAI_API_KEY=sk-VERY-SECRET-1;MINIMAX_API_KEY=sk-VERY-SECRET-2")
+
+# 集成测试：在进程内启动 Server（端口 0），用测试替身代替上游，不访问网络
+add_executable(llmgw_integration_tests
+  integration/server/fixture.cpp
+  integration/server/basic_test.cpp
+  integration/server/limits_test.cpp)
+target_link_libraries(llmgw_integration_tests PRIVATE GTest::gtest_main llmgw::server Boost::beast)
+target_compile_options(llmgw_integration_tests PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+  $<$<AND:$<BOOL:${LLMGW_WARNINGS_AS_ERRORS}>,$<CXX_COMPILER_ID:GNU,Clang>>:-Werror>)
+gtest_discover_tests(llmgw_integration_tests PROPERTIES TIMEOUT 30)

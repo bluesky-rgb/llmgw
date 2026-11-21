@@ -42,7 +42,11 @@ struct ServerConfig {
   Endpoint admin{"127.0.0.1", 9090};        ///< 管理面：默认只监听本机
   Endpoint observability{"0.0.0.0", 9100};  ///< 观测面：/metrics、/health
   unsigned workers = 0;                     ///< 0 表示等于 CPU 核数
-  std::uint32_t max_connections = 10000;
+  std::uint32_t max_connections = 10000;    ///< 入站连接总数上限，超出后返回 503
+  std::uint64_t max_body_bytes = 32ULL << 20;  ///< 请求体上限（允许带 base64 图片），超出返回 413
+  /// 防慢速攻击：读完请求头的最长时间；读请求体时，连续这么久收不到数据就断开
+  Seconds read_timeout{10};
+  Seconds keep_alive_timeout{60};  ///< 长连接上两个请求之间的最长空闲时间
 };
 
 /// 超时（design.md 6.3）。都是正整数秒。
