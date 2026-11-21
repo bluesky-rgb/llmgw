@@ -756,7 +756,7 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 {
   "server": { "host": "0.0.0.0", "port": 8080, "admin_listen": "127.0.0.1:9090", "observability_listen": "0.0.0.0:9100",
               "workers": 0, "max_connections": 10000 },
-  "timeouts": { "connect": 10, "first_byte": 60, "idle": 60, "total": 600 },
+  "timeouts": { "connect": 10, "first_byte": 60, "first_byte_non_stream": 300, "idle": 60, "total": 600 },
 
   "keys": [
     { "id": "app-chatbot", "hash": "blake3:9f2c…", "budget": { "daily_usd": 20, "on_exceed": "reject" },
@@ -796,6 +796,8 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 - MiMo Token Plan 是订阅套餐，使用 `"billing": "subscription"`
 - 三家厂商的具体差异和推荐配置见 [providers.md](providers.md)
 - 完整的字段说明在 v1.0 实现时写入 `docs/configuration.md`
+- **当前支持情况（v0.2）**：`server`、`timeouts`、`providers`（含 `error_mapping`）、`proxy`、`models` 已实现（任务 1.1），可用 `llmgw check` 校验，示例见 [config/llmgw.example.json](../config/llmgw.example.json)。`keys`、`pricing`、`accounting`、`retry`、`providers[].quota` 在对应功能实现之前**会报错而不是被忽略**，避免用户误以为鉴权或预算已经生效
+- 超时增加了 `first_byte_non_stream`（非流式请求等待响应头，默认 300 秒，见 6.3）；目标级的 `timeouts` 不能设置 `total`
 
 ---
 

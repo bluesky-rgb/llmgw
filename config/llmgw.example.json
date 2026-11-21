@@ -1,0 +1,38 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "admin_listen": "127.0.0.1:9090",
+    "observability_listen": "0.0.0.0:9100",
+    "workers": 0,
+    "max_connections": 10000
+  },
+  "timeouts": { "connect": 10, "first_byte": 60, "first_byte_non_stream": 300, "idle": 60, "total": 600 },
+
+  "providers": [
+    { "name": "openai",  "base_url": "https://api.openai.com/v1",               "api_key_env": "OPENAI_API_KEY",
+      "max_connections": 256 },
+    { "name": "minimax", "base_url": "https://api.minimaxi.com/v1",             "api_key_env": "MINIMAX_API_KEY",
+      "error_mapping": { "field": "base_resp.status_code",
+                         "codes": { "1002": 429, "1004": 401, "1008": 402, "1001": 504, "1013": 500 } } },
+    { "name": "mimo",    "base_url": "https://token-plan-cn.xiaomimimo.com/v1", "api_key_env": "MIMO_API_KEY" }
+  ],
+
+  "proxy": { "https": "env" },
+
+  "models": [
+    { "name": "smart", "targets": [
+        { "provider": "openai",  "model": "gpt-5.6-sol",
+          "drop_fields": ["messages[].reasoning_content", "reasoning_split", "thinking"] },
+        { "provider": "minimax", "model": "MiniMax-M3", "set_fields": { "reasoning_effort": "medium" } },
+        { "provider": "mimo",    "model": "mimo-v2.6-pro", "timeouts": { "first_byte": 120 } } ] },
+
+    { "name": "fast", "targets": [
+        { "provider": "openai",  "model": "gpt-5.4-mini",
+          "drop_fields": ["messages[].reasoning_content"],
+          "rename_fields": { "max_tokens": "max_completion_tokens" } },
+        { "provider": "mimo",    "model": "mimo-v2.6-pro" } ] },
+
+    { "name": "mimo", "targets": [ { "provider": "mimo", "model": "mimo-v2.6-pro" } ] }
+  ]
+}
