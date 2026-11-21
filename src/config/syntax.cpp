@@ -95,6 +95,8 @@ Result<Url> parse_url(std::string_view text) {
     url.port = 80;
     rest = text.substr(7);
   } else {
+    // 含有 "@" 时可能带有凭据（user:pass@host），不回显原文（独立审查发现）
+    if (text.find('@') != std::string_view::npos) return invalid("必须以 http:// 或 https:// 开头");
     return invalid("必须以 http:// 或 https:// 开头，实际是 \"" + std::string(text) + "\"");
   }
   if (rest.find_first_of("?#") != std::string_view::npos)
@@ -102,7 +104,7 @@ Result<Url> parse_url(std::string_view text) {
   const auto slash = rest.find('/');
   const auto authority = rest.substr(0, slash);
   if (authority.find('@') != std::string_view::npos) {
-    return invalid("不能在 URL 中写用户名和密码；密钥请通过 api_key_env 指定的环境变量提供");
+    return invalid("不能在 URL 中写用户名和密码（上游的密钥请通过 api_key_env 提供；代理认证将在任务 1.4 中支持）");
   }
   auto hp = split_host_port(authority);
   if (!hp) return fail(hp.error());

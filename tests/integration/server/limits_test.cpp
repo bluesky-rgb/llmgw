@@ -35,18 +35,33 @@ TEST_F(ServerTest, stalled_body_is_cut_off_after_read_timeout) {
 }
 
 // 请求体慢慢但持续地发送，总时长超过 read_timeout：是正常请求（比如慢速网络上传大图片），不能断开
+// 慢速网络上传一个较大的请求体：约 20 KB/s（高于 16 KB/s 的最低速度），总时长约 3 秒，超过 read_timeout
 TEST_F(ServerTest, slow_but_steady_body_is_accepted) {
   Client c(server_->data_port());
-  const std::string body = R"({"model":"ok","stream":true,"pad":")" + std::string(64, 'x') + "\"}";
+  const std::string body = R"({"model":"ok","stream":true,"pad":")" + std::string(60000, 'x') + "\"}";
   c.send("POST /v1/chat/completions HTTP/1.1\r\nHost: t\r\nContent-Length: " +
          std::to_string(body.size()) + "\r\n\r\n");
-  for (std::size_t i = 0; i < body.size(); i += 12) {  // 约 9 段，每段间隔 300 ms：共 2.7 秒
-    c.send(body.substr(i, 12));
-    std::this_thread::sleep_for(milliseconds(300));
+  for (std::size_t i = 0; i < body.size(); i += 3000) {  // 每 150 ms 发 3 KB：约 20 KB/s，共约 3 秒
+    c.send(body.substr(i, 3000));
+    std::this_thread::sleep_for(milliseconds(150));
   }
   auto r = c.read_response();
-  ASSERT_TRUE(r.ok) << "持续发送的请求体被当作慢速攻击断开了";
+  ASSERT_TRUE(r.ok) << "正常速度的慢速上传被当作慢速攻击断开了";
   EXPECT_EQ(r.msg.result_int(), 200);
+}
+
+// 慢速攻击：一直有数据，但速度极低（独立审查发现：每 9 秒发 1 字节就能一直占住连接）
+TEST_F(ServerTest, trickling_body_below_minimum_rate_is_cut_off) {
+  Client c(server_->data_port());
+  c.send("POST /v1/chat/completions HTTP/1.1\r\nHost: t\r\nContent-Length: 50000\r\n\r\n{\"model\":");
+  const auto start = Clock::now();
+  bool closed = false;
+  for (int i = 0; i < 20 && !closed; ++i) {  // 每 300 ms 发 10 字节：约 33 B/s，远低于 16 KB/s
+    closed = !c.try_send(std::string(10, ' ')) || c.closed_within(milliseconds(300));
+  }
+  EXPECT_TRUE(closed) << "持续但极慢的请求体没有被断开";
+  EXPECT_LT(Clock::now() - start, milliseconds(3500)) << "宽限期（1 秒）之后应该很快断开";
+  EXPECT_EQ(probe_->dispatches, 0);
 }
 
 // S6：空闲的长连接

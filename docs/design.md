@@ -87,7 +87,7 @@
 
 ### 2.1 v1.0 支持的功能
 
-“原型”一列表示 v0.1 代码的现状：✅ 已实现，🟡 部分实现或有已知问题，⬜ 未实现。
+“原型”一列表示 v0.1 代码的现状：✅ 已实现，🟡 部分实现或有已知问题，⬜ 未实现。**新架构（v1.0）的进度不在这里**，见 [roadmap.md](roadmap.md) 中各任务的状态和各模块的 README。
 
 | 类别 | 功能 | 说明 | 原型 |
 |---|---|---|---|
@@ -236,7 +236,7 @@ flowchart LR
 | 返回数据 | 作为函数返回值（`Decision`、`vector<Target>`、`ResponseStream`、`Chunk`） |
 | 返回错误 | 作为返回值：`Result<T>`（成功时为 T，失败时为 `Error`，接口与 `std::expected` 相同，见 ADR-007），热路径不抛异常 |
 | 上报指标 | 下层调用 `core` 中定义的 `MetricsRecorder` 接口（依赖倒置：接口由底层定义，Worker 启动时注入实现） |
-| 取消（客户端断开、超时） | Session 对整个请求做一次竞速（ADR-006 结论 1）；一旦断开或超时，Asio 自动取消正在等待的操作，取消沿 `co_await` 链传到下层。下层不需要检查任何标志 |
+| 取消（客户端断开、超时） | Session 对整个请求做一次竞速（ADR-006 结论 1）；一旦断开或超时，Asio 取消正在等待的操作，取消沿 `co_await` 链传到下层：被取消的操作以错误结束，**协程会继续执行**，所以下层在产生副作用（写响应、更新熔断计数、记录尝试）之前要先检查取消状态（ADR-006 补充、`task.h`） |
 
 **依赖方向（编译期）：** `server → middleware / router / executor → provider → upstream / stream → core`。`core` 只定义公共类型和接口（`RequestContext`、`ResponseStream`、`Chunk`、`Error`、`MetricsRecorder`），不依赖任何模块。
 
@@ -613,12 +613,12 @@ llmgw/
 |---|---|---|
 | `timeouts.connect` | 10 秒 | 建立到上游的连接（包括 TLS 握手） |
 | `timeouts.first_byte` | 60 秒 | 发出请求后，等待响应头 |
-| `timeouts.idle` | 60 秒 | 流式输出中，两块数据之间的最长间隔 |
+| `timeouts.idle` | 60 秒 | 流式输出中，**等待上游**下一块数据的最长时间。等客户端读走数据的时间不算在内（那是 `server.write_timeout`），否则读得慢的客户端会被误判为上游超时 |
 | `timeouts.total` | 600 秒 | 整个请求的截止时间，包括所有重试 |
 
 推理模型（GPT-5.6、MiniMax-M3、MiMo 默认都开启思考）的首字延迟可能长达几十秒；非流式请求更要等整个回答生成完才有响应头。所以非流式请求的 `first_byte` 默认为 300 秒，并且**所有超时都可以按目标单独覆盖**。
 
-**实现方式：** 用 Asio awaitable operators 的 `||` 让等待操作和定时器“竞速”，谁先完成就用谁的结果，其余的被自动取消。**竞速放在请求和尝试的粒度上，不放在每个数据块上**（0.6 实测：每块竞速一次的开销是搬数据本身的 8 倍以上，见 ADR-006）：Session 对整个请求做一次竞速（总截止时间、客户端断开）；executor 对每次尝试做一次竞速（连接、首字节超时）；空闲超时用惰性定时器。以下情况会立即中断正在等待的操作，不需要等超时：
+**实现方式：** 用 Asio awaitable operators 的 `||` 让等待操作和定时器“竞速”，谁先**正常**完成就用谁的结果，其余的被自动取消。⚠️ `||` 是 `wait_for_one_success`：**抛异常的分支不会结束竞速**，而是被悄悄吞掉、一直等到别的分支成功，所以参加竞速的协程必须在内部捕获全部异常（独立审查发现，见 ADR-006 补充）。**竞速放在请求和尝试的粒度上，不放在每个数据块上**（0.6 实测：每块竞速一次的开销是搬数据本身的 8 倍以上，见 ADR-006）：Session 对整个请求做一次竞速（总截止时间、客户端断开）；executor 对每次尝试做一次竞速（连接、首字节超时）；空闲超时用惰性定时器。以下情况会立即中断正在等待的操作，不需要等超时：
 - 客户端断开连接
 - 总截止时间到期
 - 网关正在退出
@@ -666,7 +666,8 @@ Session 协程里的转发循环是“**读上游一块 → 写给客户端 → 
 
 - 入站连接数超过 `server.max_connections` 时，新连接直接返回 503 并关闭
 - 从连接池取连接时排队超时，返回 503
-- 读取请求头和请求体设置超时（默认 10 秒），防止慢速攻击（slowloris）长期占住连接
+- 读取请求头设置超时（默认 10 秒）；请求体要求持续有进展，并且平均速度不低于 16 KB/s。防止慢速攻击（slowloris）长期占住连接
+- 写响应设置超时（`server.write_timeout`，默认 60 秒）：客户端长时间不读走数据时断开，释放连接名额
 - 请求体超过 `server.max_body_bytes` 时返回 413
 
 ### 6.9 可观测性
@@ -759,7 +760,7 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 {
   "server": { "host": "0.0.0.0", "port": 8080, "admin_listen": "127.0.0.1:9090", "observability_listen": "0.0.0.0:9100",
               "workers": 0, "max_connections": 10000, "max_body_bytes": 33554432,
-              "read_timeout": 10, "keep_alive_timeout": 60 },
+              "read_timeout": 10, "keep_alive_timeout": 60, "write_timeout": 60 },
   "timeouts": { "connect": 10, "first_byte": 60, "first_byte_non_stream": 300, "idle": 60, "total": 600 },
 
   "keys": [

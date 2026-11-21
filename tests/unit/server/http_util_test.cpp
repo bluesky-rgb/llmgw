@@ -25,6 +25,17 @@ TEST(ParseChatFields, reads_model_and_stream) {
   EXPECT_TRUE(late->stream);
 }
 
+// 审查 #12：网关按哪个 model 路由、后面的组件又按哪个处理，不能有歧义（解析器差异）
+TEST(ParseChatFields, rejects_duplicate_keys_and_trailing_content) {
+  for (const char* body : {R"({"model":"cheap","model":"expensive"})", R"({"model":"m","stream":true,"stream":false})",
+                           R"({"model":"m"} trailing)", R"({"model":"m"}{"model":"n"})"}) {
+    SCOPED_TRACE(body);
+    auto r = parse(body);
+    EXPECT_FALSE(r) << "应该拒绝";
+  }
+  EXPECT_TRUE(parse("{\"model\":\"m\"}  \n")) << "末尾的空白是合法的";
+}
+
 TEST(ParseChatFields, explains_what_is_wrong) {
   struct Case {
     const char* body;
@@ -63,6 +74,38 @@ TEST(ErrorBody, uses_openai_format_and_escapes_message) {
   EXPECT_TRUE(error_event(e).ends_with("\n\n"));
 }
 
+TEST(Security, safe_header_rejects_injection_and_bad_names) {
+  EXPECT_TRUE(safe_header("content-type", "text/event-stream"));
+  EXPECT_TRUE(safe_header("x-ratelimit-remaining-tokens", "1000"));
+  EXPECT_TRUE(safe_header("x-a", "tab\tis fine"));
+  EXPECT_TRUE(safe_header("x-a", "UTF-8 值 也可以"));
+  EXPECT_FALSE(safe_header("x-a", "a\r\nSet-Cookie: x=1"));
+  EXPECT_FALSE(safe_header("x-a", "a\nb"));
+  EXPECT_FALSE(safe_header("x-a", "a\rb"));
+  EXPECT_FALSE(safe_header("x-a", std::string("a\0b", 3)));
+  EXPECT_FALSE(safe_header("x-a", "del\x7f"));
+  EXPECT_FALSE(safe_header("", "v"));
+  EXPECT_FALSE(safe_header("x bad", "v"));
+  EXPECT_FALSE(safe_header("x:bad", "v"));
+  EXPECT_FALSE(safe_header("x\r\nbad", "v"));
+}
+
+TEST(Security, only_plain_chunked_transfer_encoding_is_accepted) {
+  EXPECT_TRUE(is_plain_chunked("chunked"));
+  EXPECT_TRUE(is_plain_chunked(" Chunked\t"));
+  EXPECT_FALSE(is_plain_chunked("gzip, chunked"));
+  EXPECT_FALSE(is_plain_chunked("chunked, gzip"));
+  EXPECT_FALSE(is_plain_chunked("chunked,chunked"));
+  EXPECT_FALSE(is_plain_chunked("identity"));
+  EXPECT_FALSE(is_plain_chunked(""));
+}
+
+TEST(Paths, accepts_absolute_form) {
+  EXPECT_EQ(path_of("http://gw.local/v1/models?x=1"), "/v1/models");
+  EXPECT_EQ(path_of("HTTPS://gw.local:8443/v1/chat/completions"), "/v1/chat/completions");
+  EXPECT_EQ(path_of("http://gw.local"), "/");
+}
+
 TEST(Paths, strips_query_and_detects_hop_by_hop) {
   EXPECT_EQ(path_of("/v1/models?x=1"), "/v1/models");
   EXPECT_EQ(path_of("/v1/models"), "/v1/models");
@@ -89,10 +132,10 @@ constexpr bool kMeasurable = false;
 
 // S20：从请求体中取 model/stream 的开销。打印结果写入验证记录；断言一个下限速度，防止换成慢的实现
 TEST(ParseChatFields, cost_on_typical_and_large_bodies) {
+  // 最坏情况：model 和 stream 排在巨大的 messages 之后，必须跳过整个数组才能找到（审查 #13：原来放在了最前面）
   auto body_of = [](std::size_t bytes) {
     std::string msg(bytes, 'a');
-    return R"({"model":"smart","stream":true,"messages":[{"role":"user","content":")" + msg +
-           R"("}]})";
+    return R"({"messages":[{"role":"user","content":")" + msg + R"("}],"model":"smart","stream":true})";
   };
   for (const std::size_t size :
        {std::size_t{10} << 10, std::size_t{1} << 20, std::size_t{32} << 20}) {

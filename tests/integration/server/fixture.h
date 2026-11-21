@@ -42,7 +42,8 @@ struct Probe {
 ///   hang        dispatch() 一直不返回    stall    1 块之后一直不再发送
 ///   midfail     2 块之后出错             error:N  返回 ErrorCode N（带 Retry-After: 2）
 ///   throw       dispatch() 抛出异常      worker   响应头中带上 Worker 编号
-///   big         64 KB × 200 块（背压）
+///   big         64 KB × 200 块（背压）  medium   每 50 ms 一块，共 5 块
+///   nextthrow   1 块之后 next() 抛异常   badstatus 状态码 1000（不合法）
 class FakeDispatcher final : public Dispatcher {
  public:
   FakeDispatcher(WorkerInfo info, std::shared_ptr<Probe> probe)
@@ -76,6 +77,12 @@ class Client {
   explicit Client(std::uint16_t port,
                   std::chrono::milliseconds timeout = std::chrono::milliseconds(5000));
   void send(const std::string& raw);
+  /// 不做断言的发送：服务端可能已经关闭了连接（测试慢速攻击、客户端不读等场景时使用）
+  bool try_send(const std::string& raw);
+  /// 读最多 max 字节（先取缓冲区中已有的）；超时、出错或连接关闭时返回空
+  std::string read_some(std::size_t max);
+  /// 读到连接关闭或超过 within 为止，返回读到的全部数据
+  std::string read_until_close_or(std::chrono::milliseconds within);
   /// 发一个 POST /v1/chat/completions，body 为 {"model": model, "stream": stream}
   void post_chat(const std::string& model, bool stream = true,
                  const std::string& extra_headers = "");

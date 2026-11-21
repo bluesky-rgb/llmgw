@@ -44,11 +44,13 @@ class Server {
   Server& operator=(Server&&) = delete;
   ~Server();  ///< 等同于 stop()
 
-  /// 绑定端口，启动 Worker 和控制面线程。端口被占用等错误在这里返回（说明是哪个端口）。
+  /// 绑定端口，启动 Worker 和控制面线程。端口被占用等错误在这里返回（说明是哪个端口），
+  /// 失败时释放已经绑定的端口。只能调用一次。
   [[nodiscard]] Result<void> start();
 
-  /// 停止：/ready 立即返回 503，停止接收新连接，关闭所有连接，等所有线程退出。
-  /// 可以重复调用。（等进行中的请求结束的“优雅退出”在任务 3.x 中实现。）
+  /// 停止：停止接收新连接，关闭所有连接，等所有线程退出。可以重复调用。
+  /// 注意：目前 stop() 会立即关闭控制面，“/ready 返回 503 让负载均衡器摘掉流量”的窗口只有微秒级；
+  /// 先返回 503、等进行中的请求结束再退出的“优雅退出”在任务 3.x 中实现。
   void stop();
 
   /// 实际监听的端口。start() 成功之后才有意义。
@@ -59,6 +61,8 @@ class Server {
   [[nodiscard]] unsigned workers() const;
 
  private:
+  Result<void> start_impl();
+
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };

@@ -152,6 +152,7 @@ TEST(Rules, server_ports_ranges_and_conflicts) {
   expect_error(minimal(R"(, "server": {"read_timeout": 0})"), "server.read_timeout");
   expect_error(minimal(R"(, "server": {"keep_alive_timeout": 7200})"), "server.keep_alive_timeout",
                "3600");
+  expect_error(minimal(R"(, "server": {"write_timeout": 0})"), "server.write_timeout");
   expect_error(minimal(R"(, "server": {"admin_listen": "127.0.0.1"})"), "server.admin_listen",
                "端口");
   expect_warning(minimal(R"(, "server": {"admin_listen": "0.0.0.0:9090"})"), "server.admin_listen",
@@ -199,8 +200,7 @@ TEST(Rules, error_mapping) {
 }
 
 TEST(Rules, proxy) {
-  auto env = with_env({{"HTTPS_PROXY", "http://127.0.0.1:7890"}});
-  env.resolve_env = false;
+  auto env = with_env({{"HTTPS_PROXY", "http://127.0.0.1:7890"}, {"OPENAI_API_KEY", "k"}});
   auto r = parse(minimal(R"(, "proxy": {"https": "env"})"), env);
   ASSERT_TRUE(r.ok()) << dump(r);
   EXPECT_EQ(r.snapshot->proxy.https->port, 7890);
@@ -335,6 +335,13 @@ TEST(Syntax, reports_line_and_column) {
   EXPECT_EQ(unterminated.issues[0].path.rfind("第 1 行", 0), 0U);
 }
 
+// 模糊测试发现：数字溢出时 nlohmann 抛出的是 out_of_range 而不是 parse_error，此前会让 llmgw check 崩溃
+TEST(Syntax, number_overflow_is_an_error_not_a_crash) {
+  auto r = parse(R"({"timeouts": {"connect": 1e999}})", skip_env());
+  ASSERT_EQ(r.issues.size(), 1U) << dump(r);
+  EXPECT_NE(r.issues[0].message.find("超出范围"), std::string::npos) << r.issues[0].message;
+}
+
 TEST(Syntax, skips_utf8_bom) {
   auto r = parse("\xEF\xBB\xBF" + minimal(), skip_env());
   EXPECT_TRUE(r.ok()) << dump(r);
@@ -347,6 +354,28 @@ TEST(Syntax, unreadable_file_is_reported_with_its_name) {
 }
 
 // ---------- F8：敏感信息 ----------
+
+// 独立审查发现：带认证的代理地址（企业环境常见）的密码会出现在错误信息中，--skip-env 时也会读取
+TEST(Secrets, proxy_credentials_never_appear_in_issues) {
+  for (const char* proxy : {"http://alice:S3cr3tP4ss@proxy.corp:3128", "alice:S3cr3tP4ss@proxy.corp:3128"}) {
+    SCOPED_TRACE(proxy);
+    auto r = parse(minimal(R"(, "proxy": {"https": "env"})"),
+                   with_env({{"HTTPS_PROXY", proxy}, {"OPENAI_API_KEY", "k"}}));
+    ASSERT_FALSE(r.ok());
+    for (const auto& i : r.issues) EXPECT_EQ(i.message.find("S3cr3tP4ss"), std::string::npos) << i.message;
+    auto literal = parse(minimal(std::string(R"(, "proxy": {"https": ")") + proxy + "\"}"), skip_env());
+    ASSERT_FALSE(literal.ok());
+    for (const auto& i : literal.issues) EXPECT_EQ(i.message.find("S3cr3tP4ss"), std::string::npos) << i.message;
+  }
+}
+
+TEST(Secrets, skip_env_does_not_read_proxy_environment) {
+  auto o = with_env({{"HTTPS_PROXY", "http://127.0.0.1:7890"}});
+  o.resolve_env = false;
+  auto r = parse(minimal(R"(, "proxy": {"https": "env"})"), o);
+  ASSERT_TRUE(r.ok()) << dump(r);
+  EXPECT_FALSE(r.snapshot->proxy.https.has_value()) << "--skip-env 时不应该读取环境变量";
+}
 
 TEST(Secrets, api_key_never_appears_in_issues) {
   // 即使配置有错误，消息中也不能出现密钥

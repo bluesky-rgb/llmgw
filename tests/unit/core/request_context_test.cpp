@@ -15,10 +15,10 @@ static_assert(
 static_assert(!std::is_assignable_v<decltype((std::declval<RequestContext&>().config)),
                                     std::shared_ptr<const config::Snapshot>>,
               "ctx.config 必须是只读的");
-// 一个请求只有一份上下文：不能复制，可以移动构造（交给协程时需要）
+// 一个请求只有一份上下文：不能复制，也不能移动（“移动”会退化成复制整个请求体，独立审查发现）
 static_assert(!std::is_copy_constructible_v<RequestContext>);
 static_assert(!std::is_copy_assignable_v<RequestContext>);
-static_assert(std::is_move_constructible_v<RequestContext>);
+static_assert(!std::is_move_constructible_v<RequestContext>);
 
 RequestContext make_ctx() {
   const auto now = SteadyClock::now();
@@ -58,12 +58,12 @@ TEST(RequestContext, records_attempts_in_order) {
   EXPECT_EQ(ctx.attempts[1].result, AttemptResult::kOk);
 }
 
-TEST(RequestContext, survives_move_into_coroutine) {
+TEST(RequestContext, factory_functions_still_work_without_moving) {
+  // 返回 prvalue 时由 C++17 保证复制省略，不需要移动构造
   auto ctx = make_ctx();
   ctx.auth.key_id = "team-a";
-  RequestContext moved(std::move(ctx));
-  EXPECT_EQ(moved.request.request_id, "req-1");
-  EXPECT_EQ(moved.auth.key_id, "team-a");
+  EXPECT_EQ(ctx.request.request_id, "req-1");
+  EXPECT_EQ(ctx.auth.key_id, "team-a");
 }
 
 TEST(AttemptResult, labels_match_observability_doc) {

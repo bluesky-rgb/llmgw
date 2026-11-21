@@ -100,6 +100,45 @@ jobs:
           go vet ./...
           go test -race -count=1 ./...
 
+  fuzz:
+    # 每个模糊测试目标运行 60 秒（libFuzzer，覆盖率引导）。发现问题时把触发它的输入上传为构件
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-18 libclang-rt-18-dev
+      - name: Cache third-party sources
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: deps-${{ hashFiles('cmake/dependencies.json') }}
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_CXX_COMPILER=clang++-18 -DLLMGW_BUILD_FUZZ=ON
+          -DLLMGW_BUILD_TESTS=OFF -DLLMGW_BUILD_PROTOTYPE=OFF
+          -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps
+      - name: Build
+        run: cmake --build build --target llmgw_fuzz_config llmgw_fuzz_syntax llmgw_fuzz_chat_fields
+      - name: Fuzz
+        run: |
+          set -e
+          mkdir -p crashes
+          for t in config:config syntax:syntax chat_fields:chat; do
+            name=${t%%:*}; corpus=${t##*:}
+            echo "== $name"
+            build/tests/fuzz/llmgw_fuzz_$name tests/fuzz/corpus/$corpus -max_total_time=60 -artifact_prefix=crashes/$name- -print_final_stats=1
+          done
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: crashes/
+
   security:
     name: security
     runs-on: ubuntu-24.04
