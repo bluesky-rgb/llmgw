@@ -8,7 +8,7 @@
 - **按模型配置故障切换链**：上游返回 5xx、429 或连接失败时，按顺序切换到下一个目标
 - **流式输出（SSE）**：逐块实时转发；在第一个字节发出之前也可以切换
 - **状态码如实转发**：流式请求中上游返回 400，客户端收到的也是 400
-- **模型名映射**：对外叫 `smart`，对内可以是 `gpt-4o`、`deepseek-chat` 或本地的 `qwen2.5-7b`
+- **模型名映射**：对外叫 `smart`，对内可以是 `gpt-5.6-sol`、`MiniMax-M3`、`mimo-v2.6-pro` 或本地的 `qwen2.5-7b`
 - **网关鉴权**：客户端使用网关自己的 key，上游的真实 key 不会暴露给应用
 - **Token 统计、Prometheus 指标、JSON 结构化日志**
 
@@ -22,6 +22,7 @@
 - 转发队列没有上限（没有背压），客户端很慢时内存会增长
 - 只有读取超时，没有总超时；客户端断开后，上游线程最长要等到读取超时才会退出
 - 没有熔断；网关 key 在配置中是明文
+- 没有厂商差异适配：比如请求里带着 MiMo 的 `reasoning_content` 切换到 GPT 时，可能返回 400（见 [providers.md](providers.md)）
 
 ## 编译
 
@@ -45,7 +46,8 @@ cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_HTTPLIB=/path/to/cpp-httplib \
 ```bash
 cp config.example.json config.json
 export OPENAI_API_KEY=sk-...
-export DEEPSEEK_API_KEY=sk-...
+export MINIMAX_API_KEY=...        # MiniMax 国内站
+export MIMO_API_KEY=tp-...        # 小米 MiMo Token Plan
 ./build/llmgw --config config.json --check   # 只检查配置，不启动
 ./build/llmgw --config config.json
 ```
@@ -56,7 +58,7 @@ export DEEPSEEK_API_KEY=sk-...
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H "Authorization: Bearer sk-gw-change-me" \
   -H "Content-Type: application/json" \
-  -d '{"model":"gpt-4o-mini","stream":true,"messages":[{"role":"user","content":"你好"}]}'
+  -d '{"model":"smart","stream":true,"messages":[{"role":"user","content":"你好"}]}'
 ```
 
 使用 OpenAI 官方 Python SDK：
@@ -65,7 +67,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 from openai import OpenAI
 client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="sk-gw-change-me")
 for chunk in client.chat.completions.create(
-        model="gpt-4o-mini", stream=True,
+        model="smart", stream=True,
         messages=[{"role": "user", "content": "你好"}]):
     print(chunk.choices[0].delta.content or "", end="")
 ```
@@ -144,7 +146,7 @@ llmgw_tokens_total{model, provider, type}          # prompt / completion
 ```bash
 docker build -t llmgw .
 docker run -p 8080:8080 -v $PWD/config.json:/etc/llmgw/config.json:ro \
-  -e OPENAI_API_KEY -e DEEPSEEK_API_KEY llmgw
+  -e OPENAI_API_KEY -e MINIMAX_API_KEY -e MIMO_API_KEY llmgw
 ```
 
 > Dockerfile 还没有实际构建验证过。容器内的 `127.0.0.1` 指向容器自己；如果要访问宿主机上的 llama.cpp，请使用 `host.docker.internal`，或者加上 `--network host`。

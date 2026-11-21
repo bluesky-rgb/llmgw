@@ -70,7 +70,7 @@ flowchart LR
 
     GW(["llmgw<br/>大模型网关"])
 
-    Cloud["☁️ 云端模型<br/>OpenAI · DeepSeek · 通义千问 · Claude"]
+    Cloud["☁️ 云端模型<br/>OpenAI · MiniMax · 小米 MiMo"]
     Local["🖥 本地模型<br/>llama.cpp server"]
     Mon["📊 监控<br/>Prometheus · Grafana"]
     Redis[("Redis<br/>多实例共享状态")]

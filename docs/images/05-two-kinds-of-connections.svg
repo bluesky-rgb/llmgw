@@ -19,7 +19,7 @@
 <text class="th" x="575" y="88" text-anchor="middle" dominant-baseline="central">OpenAI</text>
 <text class="ts" x="575" y="108" text-anchor="middle" dominant-baseline="central">上游</text>
 <rect x="510" y="170" width="130" height="56" rx="8" class="box" stroke-width="0.5"/>
-<text class="th" x="575" y="188" text-anchor="middle" dominant-baseline="central">llama.cpp</text>
+<text class="th" x="575" y="188" text-anchor="middle" dominant-baseline="central">MiniMax</text>
 <text class="ts" x="575" y="208" text-anchor="middle" dominant-baseline="central">上游</text>
 <text class="ts" x="100" y="250" text-anchor="middle">入站连接</text>
 <text class="ts" x="575" y="250" text-anchor="middle">出站连接</text>

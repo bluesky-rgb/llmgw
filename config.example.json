@@ -14,38 +14,46 @@
       "api_key_env": "OPENAI_API_KEY"
     },
     {
-      "name": "deepseek",
-      "base_url": "https://api.deepseek.com/v1",
-      "api_key_env": "DEEPSEEK_API_KEY"
+      "name": "minimax",
+      "base_url": "https://api.minimaxi.com/v1",
+      "api_key_env": "MINIMAX_API_KEY",
+      "read_timeout_seconds": 600
     },
     {
-      "name": "local",
-      "base_url": "http://127.0.0.1:8081/v1",
-      "connect_timeout_seconds": 2,
+      "name": "mimo",
+      "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+      "api_key_env": "MIMO_API_KEY",
       "read_timeout_seconds": 600
     }
   ],
 
   "models": [
     {
-      "name": "gpt-4o-mini",
+      "name": "smart",
       "targets": [
-        { "provider": "openai", "model": "gpt-4o-mini" },
-        { "provider": "deepseek", "model": "deepseek-chat" }
+        { "provider": "openai", "model": "gpt-5.6-sol" },
+        { "provider": "minimax", "model": "MiniMax-M3" },
+        { "provider": "mimo", "model": "mimo-v2.6-pro" }
       ]
     },
     {
-      "name": "deepseek-chat",
+      "name": "fast",
       "targets": [
-        { "provider": "deepseek" },
-        { "provider": "local", "model": "qwen2.5-7b-instruct" }
+        { "provider": "openai", "model": "gpt-5.4-mini" },
+        { "provider": "mimo", "model": "mimo-v2.6-pro" }
       ]
     },
     {
-      "name": "local",
-      "targets": [
-        { "provider": "local", "model": "qwen2.5-7b-instruct" }
-      ]
+      "name": "gpt",
+      "targets": [{ "provider": "openai", "model": "gpt-5.6-sol" }]
+    },
+    {
+      "name": "minimax",
+      "targets": [{ "provider": "minimax", "model": "MiniMax-M3" }]
+    },
+    {
+      "name": "mimo",
+      "targets": [{ "provider": "mimo", "model": "mimo-v2.6-pro" }]
     }
   ]
 }

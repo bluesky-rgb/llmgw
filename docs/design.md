@@ -5,7 +5,8 @@
 | 文档状态 | v1.0 设计，主体已确定；未决问题见[第 11 节](#11-待补充与开放问题) |
 | 当前代码 | v0.1 原型（cpp-httplib，线程池阻塞模型），用于验证功能和作为性能对照组 |
 | 目标版本 | v1.0（Asio 协程，见[里程碑](#9-里程碑)） |
-| 相关文档 | [并发方案图解](concurrency-explained.md) · [分析与设计图](diagrams.md) · [设计决策记录](decisions.md) · [原型使用手册](usage.md) |
+| 首批上游 | OpenAI（GPT）、MiniMax（国内站）、小米 MiMo（Token Plan），见 [上游厂商适配说明](providers.md) |
+| 相关文档 | [上游厂商适配](providers.md) · [并发方案图解](concurrency-explained.md) · [分析与设计图](diagrams.md) · [设计决策记录](decisions.md) · [原型使用手册](usage.md) |
 
 ## 目录
 
@@ -32,7 +33,7 @@
 
 | 问题 | 具体表现 |
 |---|---|
-| 接口不统一 | OpenAI、DeepSeek、通义千问、本地模型，各家的鉴权、错误码、流式格式都有差异 |
+| 接口不统一 | OpenAI、MiniMax、小米 MiMo、本地模型，各家的参数、推理内容、错误码、计费方式都有差异 |
 | 不稳定 | 某一家限流（429）或宕机，业务就直接不可用 |
 | 成本失控 | 不知道哪个应用、哪个 key 花了多少钱，也没法设上限 |
 | 密钥分散 | 上游的真实 API key 散落在各个应用里，泄露风险高 |
@@ -90,7 +91,8 @@
 |---|---|---|---|
 | 接口 | `POST /v1/chat/completions` | 流式和非流式，兼容 OpenAI SDK | ✅ |
 | 接口 | `GET /v1/models` | 列出配置的模型 | ✅ |
-| 上游 | 任意 OpenAI 兼容服务 | OpenAI、DeepSeek、通义千问（兼容模式）、Kimi、llama.cpp、vLLM、Ollama 等 | ✅ |
+| 上游 | OpenAI 兼容服务 | 首批验证 **OpenAI（GPT）、MiniMax（国内站）、小米 MiMo（Token Plan）**；其他兼容服务（llama.cpp、vLLM 等）理论上可用。见 [providers.md](providers.md) | ✅ |
+| 上游 | 厂商差异适配 | 每个目标可以删除、改名、强制设置请求参数；识别响应体中的业务错误码；按模型设置超时（见 [6.12](#612-厂商适配)） | ⬜ |
 | 路由 | 模型路由与名称映射 | 对外模型名 → 按顺序排列的上游目标列表 | ✅ |
 | 容灾 | 故障切换 | 按[重试规则](#61-重试与防重复扣费)切换，**不会造成重复扣费** | 🟡 读取超时也会重试，可能重复扣费 |
 | 容灾 | 熔断 | 每个上游一个熔断器，三态模型 | ⬜ |
@@ -347,6 +349,7 @@ llmgw/
 | DNS 解析失败、连接失败、TLS 握手失败 | 不可能 | ✅ 换下一个目标 |
 | 复用的连接在发送阶段就失败 | 不可能 | ✅ 换新连接重发 |
 | HTTP 429、502、503 | 不会 | ✅ 换下一个目标 |
+| 上游返回 401、403 或余额不足 | 不会 | ✅ 换下一个目标。这是网关自己的上游 key 出了问题，不能把 401 转给客户端；同时记录告警指标 |
 | 读取超时、连接被重置（已发出请求，未收到响应头） | **不确定** | ❌ 默认返回 504；可以配置为允许重试 |
 | HTTP 500、504 | **不确定** | ❌ 默认原样返回；可以配置为允许重试 |
 | 其他 4xx | 不会，但重试也没用 | ↩️ 原样返回 |
@@ -374,6 +377,8 @@ llmgw/
 | `timeouts.first_byte` | 60 秒 | 发出请求后，等待响应头 |
 | `timeouts.idle` | 60 秒 | 流式输出中，两块数据之间的最长间隔 |
 | `timeouts.total` | 600 秒 | 整个请求的截止时间，包括所有重试 |
+
+推理模型（GPT-5.6、MiniMax-M3、MiMo 默认都开启思考）的首字延迟可能长达几十秒；非流式请求更要等整个回答生成完才有响应头。所以非流式请求的 `first_byte` 默认为 300 秒，并且**所有超时都可以按目标单独覆盖**。
 
 **实现方式：** 每个等待操作都和一个定时器“竞速”，谁先完成就用谁的结果（Asio awaitable operators 中的 `||`）。用 `cancellation_signal` 把取消信号传到所有 `co_await` 上。以下情况会立即中断正在等待的操作，不需要等超时：
 - 客户端断开连接
@@ -467,7 +472,24 @@ Session 协程里的转发循环是“**读上游一块 → 写给客户端 → 
 | 503 | `overloaded` | 网关过载 |
 | 504 | `upstream_timeout` | 上游超时，并且按规则不能重试 |
 
-上游返回的 4xx 原样转发给客户端。
+上游返回的 4xx 原样转发给客户端（401、403 和余额不足除外，见 6.1）。
+
+### 6.12 厂商适配
+
+三家首批上游都兼容 OpenAI 格式，但在参数、推理内容、错误格式和计费方式上有差异。网关在**每个路由目标**上提供以下配置，细节和验证清单见 [providers.md](providers.md)：
+
+| 配置 | 作用 | 典型用法 |
+|---|---|---|
+| `drop_fields` | 转发前删除字段，支持消息里的字段 | 切换到 OpenAI 时删除 MiMo 要求回传的 `messages[].reasoning_content` |
+| `rename_fields` | 字段改名 | `max_tokens` → `max_completion_tokens` |
+| `set_fields` | 强制设置参数 | 给 MiniMax 设置 `reasoning_effort: medium`，降低首字延迟和费用 |
+| `timeouts` | 覆盖全局超时 | 推理模型的 `first_byte` 设得更长 |
+| `error_mapping`（厂商级） | 把响应体中的业务错误码映射成 HTTP 状态码 | MiniMax 的 `base_resp.status_code`：1002 → 429 |
+
+其他约定：
+- 推理内容（`reasoning_content`）等非标准字段**原样透传**，网关不解析、不改动
+- 费用核算支持订阅套餐（`billing: subscription`），用于 MiMo Token Plan：费用记为 0，照常统计 token，并可设置套餐额度提醒
+- 不做参数取值之间的自动映射（比如不同厂商的 `reasoning_effort`），用 `drop_fields` / `set_fields` 显式处理
 
 ---
 
@@ -486,22 +508,24 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
   ],
 
   "providers": [
-    { "name": "openai",   "base_url": "https://api.openai.com/v1",   "api_key_env": "OPENAI_API_KEY",
+    { "name": "openai",  "base_url": "https://api.openai.com/v1",              "api_key_env": "OPENAI_API_KEY",
       "max_connections": 256 },
-    { "name": "deepseek", "base_url": "https://api.deepseek.com/v1", "api_key_env": "DEEPSEEK_API_KEY" },
-    { "name": "local",    "base_url": "http://127.0.0.1:8081/v1" }
+    { "name": "minimax", "base_url": "https://api.minimaxi.com/v1",            "api_key_env": "MINIMAX_API_KEY",
+      "error_mapping": { "field": "base_resp.status_code", "codes": { "1002": 429, "1004": 401, "1008": 402 } } },
+    { "name": "mimo",    "base_url": "https://token-plan-cn.xiaomimimo.com/v1", "api_key_env": "MIMO_API_KEY" }
   ],
 
   "models": [
     { "name": "smart", "targets": [
-        { "provider": "openai",   "model": "gpt-4o" },
-        { "provider": "deepseek", "model": "deepseek-chat" },
-        { "provider": "local",    "model": "qwen2.5-7b-instruct" } ] }
+        { "provider": "openai",  "model": "gpt-5.6-sol", "drop_fields": ["messages[].reasoning_content"] },
+        { "provider": "minimax", "model": "MiniMax-M3",  "set_fields": { "reasoning_effort": "medium" } },
+        { "provider": "mimo",    "model": "mimo-v2.6-pro" } ] }
   ],
 
   "pricing": [
-    { "provider": "openai",   "model": "gpt-4o",        "input_per_1m": 2.5,  "output_per_1m": 10 },
-    { "provider": "deepseek", "model": "deepseek-chat", "input_per_1m": 0.27, "output_per_1m": 1.1 }
+    { "provider": "openai",  "model": "gpt-5.6-sol",   "input_per_1m": 0, "output_per_1m": 0 },
+    { "provider": "minimax", "model": "MiniMax-M3",    "input_per_1m": 0, "output_per_1m": 0 },
+    { "provider": "mimo",    "model": "mimo-v2.6-pro", "billing": "subscription" }
   ],
 
   "retry": { "retry_on_ambiguous": false }
@@ -509,7 +533,9 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 ```
 
 - `workers` 为 0 表示等于 CPU 核数
-- `pricing` 中的价格只是示例，各家价格经常变化，使用前请按官方价格填写；没有配置价格的模型只统计 Token，不计算费用
+- `pricing` 中的单价请按各家官方价格填写（示例中写 0 是占位）；没有配置价格的模型只统计 Token，不计算费用
+- MiMo Token Plan 是订阅套餐，使用 `"billing": "subscription"`
+- 三家厂商的具体差异和推荐配置见 [providers.md](providers.md)
 - 完整的字段说明在 v1.0 实现时写入 `docs/configuration.md`
 
 ---
@@ -562,7 +588,7 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 
 | # | 问题 | 影响 | 建议 |
 |---|---|---|---|
-| 1 | 目标用户优先国内还是国际？ | 优先适配哪些厂商、文档用什么语言 | 先国内（DeepSeek、通义千问、Kimi 都兼容 OpenAI 格式，成本低），README 中英双语 |
+| 1 | ~~优先适配哪些厂商？~~ | — | ✅ 已决定：以作者已有的 OpenAI（GPT）、MiniMax（国内站）、小米 MiMo（Token Plan）为首批，见 [providers.md](providers.md) |
 | 2 | 超出预算时默认是拒绝还是降级？ | 用户体验 | 默认拒绝（402），降级作为可选项 |
 | 3 | 读取超时类的“不确定失败”是否允许用户配置为重试？ | 可用性和费用之间的取舍 | 允许，默认关闭 |
 | 4 | v1.0 是否需要 Admin API 的鉴权？ | 安全 | 需要：单独的 admin key，并且默认只监听 127.0.0.1 |
@@ -583,7 +609,7 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 
 - 每条流式连接的内存能否真正控制在 50 KB 以内（需要压测确认）
 - `SO_REUSEPORT` 在实际负载下能否把连接分配得足够均匀
-- 各厂商对 `stream_options.include_usage` 的支持情况（DeepSeek、通义千问、llama.cpp 需要逐个验证）
+- 三家首批上游的实际行为：流式用量、错误状态码、限流与 `Retry-After`、跨厂商字段兼容、空闲连接超时等，共 10 项，见 [providers.md 第 5 节](providers.md#5-验证清单)
 - 每个线程独立熔断，在线程数较多（16 核以上）时，故障发现的延迟是否可以接受
 
 ---

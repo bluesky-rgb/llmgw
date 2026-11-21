@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/bluesky-rgb/llmgw/actions/workflows/ci.yml/badge.svg)](https://github.com/bluesky-rgb/llmgw/actions/workflows/ci.yml)
 
-**llmgw 是一个可自部署的大模型网关。** 它把 OpenAI、DeepSeek、通义千问、本地 llama.cpp 等多家模型统一到同一个兼容 OpenAI 的接口后面，负责故障自动切换、流式转发、成本管控和监控。一个二进制文件加一份配置文件就能运行，数据不出自己的服务器。
+**llmgw 是一个可自部署的大模型网关。** 它把 OpenAI（GPT）、MiniMax、小米 MiMo 以及本地 llama.cpp 等多家模型统一到同一个兼容 OpenAI 的接口后面，负责故障自动切换、流式转发、成本管控和监控。一个二进制文件加一份配置文件就能运行，数据不出自己的服务器。
 
 > **项目状态：** v0.1 原型已经可以运行（[使用手册](docs/usage.md)）。v1.0 的设计已经完成，正在开发中，当前阶段是 **M2：性能底座**（[里程碑](docs/design.md#9-里程碑)）。
 
@@ -10,7 +10,7 @@
 
 | 问题 | llmgw 的做法 |
 |---|---|
-| 各家模型的接口不统一 | 对外只提供一个 OpenAI 兼容接口，现有 SDK 改一下 `base_url` 就能用 |
+| 各家模型的接口不统一 | 对外只提供一个 OpenAI 兼容接口，现有 SDK 改一下 `base_url` 就能用；各家的参数差异由网关按目标处理 |
 | 某一家宕机或限流，业务就挂了 | 按模型配置备用链路，自动切换；连续失败的上游会被熔断；**按规则重试，不会重复扣费** |
 | 费用失控 | 按 key 统计 Token 和费用，设置日、月预算，超出时拒绝或降级到便宜的模型 |
 | 上游 key 散落在各个应用里 | 应用只拿网关的 key，上游的真实 key 只保存在网关上 |
@@ -33,7 +33,7 @@
 | v1.0 支持 | 明确不做 | 以后再做（v1.x） |
 |---|---|---|
 | OpenAI 兼容的对话接口（流式 / 非流式） | TLS 终结（交给 Nginx 等反向代理） | Anthropic 协议适配 |
-| 任意 OpenAI 兼容的上游，包括本地 llama.cpp、vLLM | 存储对话内容 | 多实例部署（Redis） |
+| 首批验证 OpenAI（GPT）、MiniMax、小米 MiMo；其他 OpenAI 兼容上游（llama.cpp、vLLM 等） | 存储对话内容 | 多实例部署（Redis） |
 | 模型路由、故障切换、熔断、超时 | 用户体系、Web 管理后台 | Embeddings、Responses API |
 | 连接池、背压、过载保护 | 多租户 SaaS 与计费 | 精确缓存与语义缓存 |
 | 鉴权、限流、费用核算、预算 | 内容审核 | 智能路由、HTTP/2 |
@@ -48,24 +48,25 @@
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build && ctest --test-dir build
 
-# 配置并运行
+# 配置并运行（示例配置已包含 GPT、MiniMax 国内站、MiMo Token Plan）
 cp config.example.json config.json
-export OPENAI_API_KEY=sk-...
+export OPENAI_API_KEY=sk-...  MINIMAX_API_KEY=...  MIMO_API_KEY=tp-...
 ./build/llmgw --config config.json
 
 # 调用
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H "Authorization: Bearer sk-gw-change-me" -H "Content-Type: application/json" \
-  -d '{"model":"gpt-4o-mini","stream":true,"messages":[{"role":"user","content":"你好"}]}'
+  -d '{"model":"smart","stream":true,"messages":[{"role":"user","content":"你好"}]}'
 ```
 
-配置字段、接入本地 llama.cpp、监控指标、Docker 等详见 [原型使用手册](docs/usage.md)。
+`smart` 会先用 GPT，失败后依次切换到 MiniMax、MiMo。配置字段、接入本地 llama.cpp、监控指标、Docker 等详见 [原型使用手册](docs/usage.md)。
 
 ## 文档导航
 
 | 想了解 | 文档 |
 |---|---|
 | 项目目标、范围、架构、工程设计、各项机制 | [设计文档](docs/design.md) |
+| GPT、MiniMax、MiMo 三家的接入方式、差异和验证清单 | [上游厂商适配说明](docs/providers.md) |
 | 线程、协程、连接池、背压、预算预留是怎么回事 | [并发方案图解](docs/concurrency-explained.md) |
 | 目标分解、上下文、用例、组件、类、时序、状态、部署、计划等分析图 | [分析与设计图](docs/diagrams.md) |
 | 每个设计决策的背景、选择和代价 | [设计决策记录](docs/decisions.md) |
