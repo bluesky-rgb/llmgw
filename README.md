@@ -1,5 +1,7 @@
 # llmgw：用 C++ 写的轻量大模型网关
 
+[![CI](https://github.com/bluesky-rgb/llmgw/actions/workflows/ci.yml/badge.svg)](https://github.com/bluesky-rgb/llmgw/actions/workflows/ci.yml)
+
 一个兼容 OpenAI 接口的大模型网关，一个二进制文件就能跑。它把 OpenAI、DeepSeek、本地 llama.cpp 等多家模型统一到同一个接口后面，负责**故障自动切换、流式转发、鉴权、Token 统计和监控指标**。
 
 ```
