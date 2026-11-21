@@ -1,5 +1,5 @@
-// loadcheck：同时打开大量流式请求，检查 mock 上游在高并发下是否稳定、
-// 数据块的发送间隔是否准确。用于验证 mock 自身不会成为压测的瓶颈。
+// loadcheck：同时打开大量流式请求，测量成功率、首字节时延和数据块间隔的偏差。
+// 直接压 mock 时用于验证 mock 自身不会成为瓶颈；压网关时用于测量网关的额外延迟。
 package main
 
 import (
@@ -22,18 +22,28 @@ func main() {
 	chunks := flag.Int("chunks", 20, "每条流的数据块数")
 	interval := flag.Duration("interval", 50*time.Millisecond, "数据块间隔")
 	ramp := flag.Duration("ramp", 2*time.Second, "在这段时间内逐步建立所有连接")
+	modelFlag := flag.String("model", "", "请求中的模型名；默认根据 -chunks 和 -interval 生成 mock 模型名")
+	auth := flag.String("auth", "", "Bearer 令牌（压需要鉴权的网关时使用）")
+	statsURL := flag.String("stats-url", "", "mock 统计接口所在地址；默认与 -url 相同")
 	flag.Parse()
+	if *statsURL == "" {
+		*statsURL = *url
+	}
 
 	client := &http.Client{Transport: &http.Transport{
 		MaxIdleConnsPerHost: *streams,
 		DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 	}}
-	model := fmt.Sprintf("mock:chunks=%d,interval=%s", *chunks, *interval)
+	model := *modelFlag
+	if model == "" {
+		model = fmt.Sprintf("mock:chunks=%d,interval=%s", *chunks, *interval)
+	}
 	body := fmt.Sprintf(`{"model":%q,"stream":true,"messages":[{"role":"user","content":"hi"}]}`, model)
 
 	var (
 		mu       sync.Mutex
 		gaps     []time.Duration
+		ttfbs    []time.Duration
 		ok, fail int
 		firstErr error
 		peakRSS  int64
@@ -45,7 +55,7 @@ func main() {
 			case <-stopSampling:
 				return
 			case <-time.After(200 * time.Millisecond):
-				if rss := mockRSS(*url); rss > peakRSS {
+				if rss := mockRSS(*statsURL); rss > peakRSS {
 					peakRSS = rss
 				}
 			}
@@ -59,7 +69,7 @@ func main() {
 		go func(i int) {
 			defer wg.Done()
 			time.Sleep(time.Duration(int64(*ramp) * int64(i) / int64(*streams)))
-			local, err := runStream(client, *url, body)
+			local, ttfb, err := runStream(client, *url, body, *auth)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil || len(local) != *chunks-1 {
@@ -71,6 +81,7 @@ func main() {
 			}
 			ok++
 			gaps = append(gaps, local...)
+			ttfbs = append(ttfbs, ttfb)
 		}(i)
 	}
 	wg.Wait()
@@ -85,18 +96,15 @@ func main() {
 		}
 		devs[i] = d
 	}
-	sort.Slice(devs, func(a, b int) bool { return devs[a] < devs[b] })
-	pct := func(p float64) time.Duration {
-		if len(devs) == 0 {
-			return 0
-		}
-		return devs[int(float64(len(devs)-1)*p)]
-	}
+	pct := percentiles(devs)
+	ttfbPct := percentiles(ttfbs)
 	fmt.Printf("streams=%d ok=%d fail=%d elapsed=%s\n", *streams, ok, fail, elapsed.Round(time.Millisecond))
 	fmt.Printf("chunk interval deviation: p50=%s p99=%s max=%s (samples=%d)\n",
 		pct(0.50).Round(10*time.Microsecond), pct(0.99).Round(10*time.Microsecond), pct(1).Round(10*time.Microsecond), len(devs))
+	fmt.Printf("time to first chunk: p50=%s p99=%s max=%s\n",
+		ttfbPct(0.50).Round(10*time.Microsecond), ttfbPct(0.99).Round(10*time.Microsecond), ttfbPct(1).Round(10*time.Microsecond))
 	fmt.Printf("mock peak RSS: %.1f MB\n", float64(peakRSS)/1024/1024)
-	if p50, p99 := mockJitter(*url); p99 != 0 {
+	if p50, p99 := mockJitter(*statsURL); p99 != 0 {
 		fmt.Printf("mock-side send deviation (bucket upper bound): p50<=%dus p99<=%dus\n", p50, p99)
 	}
 	if firstErr != nil {
@@ -107,13 +115,38 @@ func main() {
 	}
 }
 
-// runStream 发起一个流式请求，返回相邻两个内容块之间的时间间隔。
-func runStream(client *http.Client, url, body string) ([]time.Duration, error) {
-	resp, err := client.Post(url+"/v1/chat/completions", "application/json", strings.NewReader(body))
+// percentiles 对样本排序，返回按分位数取值的函数。
+func percentiles(v []time.Duration) func(p float64) time.Duration {
+	sort.Slice(v, func(a, b int) bool { return v[a] < v[b] })
+	return func(p float64) time.Duration {
+		if len(v) == 0 {
+			return 0
+		}
+		return v[int(float64(len(v)-1)*p)]
+	}
+}
+
+// runStream 发起一个流式请求，返回相邻两个内容块之间的时间间隔，
+// 以及从发出请求到收到第一个内容块的时间。
+func runStream(client *http.Client, url, body, auth string) ([]time.Duration, time.Duration, error) {
+	req, err := http.NewRequest(http.MethodPost, url+"/v1/chat/completions", strings.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if auth != "" {
+		req.Header.Set("Authorization", "Bearer "+auth)
+	}
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var ttfb time.Duration
 	var gaps []time.Duration
 	var last time.Time
 	sc := bufio.NewScanner(resp.Body)
@@ -123,12 +156,14 @@ func runStream(client *http.Client, url, body string) ([]time.Duration, error) {
 			continue
 		}
 		now := time.Now()
-		if !last.IsZero() {
+		if last.IsZero() {
+			ttfb = now.Sub(start)
+		} else {
 			gaps = append(gaps, now.Sub(last))
 		}
 		last = now
 	}
-	return gaps, sc.Err()
+	return gaps, ttfb, sc.Err()
 }
 
 func mockRSS(url string) int64 {

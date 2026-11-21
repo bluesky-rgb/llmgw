@@ -52,7 +52,7 @@ cmake --build build-spike
 # 2. 启动 demo
 build-spike/spike/coroutine-proxy/coroutine-proxy \
     --listen 127.0.0.1:18100 --upstream 127.0.0.1:18081 \
-    [--workers 0] [--total-timeout 600s] [--idle-timeout 60s]
+    [--workers 0] [--total-timeout 600s] [--idle-timeout 60s] [--pregrow-fds off]
 
 # 3. 访问
 curl -N http://127.0.0.1:18100/v1/chat/completions \
@@ -60,7 +60,11 @@ curl -N http://127.0.0.1:18100/v1/chat/completions \
 curl http://127.0.0.1:18100/_proxy/stats
 ```
 
-`--workers 0` 表示等于 CPU 核数。`/_proxy/stats` 返回当前会话数、累计取消上游的次数、超时次数和进程内存。
+`--workers 0` 表示等于 CPU 核数。`/_proxy/stats` 返回当前会话数、累计取消上游的次数、超时次数、进程内存，以及事件循环延迟（`loop_lag_max_us`、`loop_lag_over_5ms`、`loop_lag_over_20ms`；延迟超过 5 ms 时还会在标准错误输出打印一行 `[lag]`）。
+
+启动时会把文件描述符表预扩容到上限，避免建连高峰期卡顿（任务 0.7 发现，见 [benchmark.md](../../docs/benchmark.md)）。`--pregrow-fds off` 关闭预扩容，只用于对照实验。
+
+压测方法与数据见 [docs/benchmark.md](../../docs/benchmark.md)。
 
 ## 复现验证
 

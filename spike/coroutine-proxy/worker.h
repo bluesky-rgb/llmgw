@@ -29,6 +29,7 @@ class Worker {
 
   void start() {
     asio::co_spawn(ioc_, accept_loop(), [](std::exception_ptr e) { report(e, "accept loop"); });
+    asio::co_spawn(ioc_, lag_probe(), [](std::exception_ptr e) { report(e, "lag probe"); });
     thread_ = std::thread([this] { ioc_.run(); });
   }
 
@@ -51,6 +52,31 @@ class Worker {
       asio::co_spawn(
           ioc_, [session]() -> asio::awaitable<void> { co_await session->run(); },
           [](std::exception_ptr e) { report(e, "session"); });
+    }
+  }
+
+  // 事件循环延迟探针：如果有同步操作卡住了线程，定时器就会晚醒
+  asio::awaitable<void> lag_probe() {
+    using Clock = std::chrono::steady_clock;
+    asio::steady_timer t(ioc_);
+    const auto start = Clock::now();
+    for (;;) {
+      const auto due = Clock::now() + std::chrono::milliseconds(10);
+      t.expires_at(due);
+      if (auto [ec] = co_await t.async_wait(kTuple); ec) co_return;
+      const auto lag =
+          std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - due).count();
+      auto cur = stats_->loop_lag_max_us.load();
+      while (lag > cur && !stats_->loop_lag_max_us.compare_exchange_weak(cur, lag)) {
+      }
+      if (lag > 5000) {
+        ++stats_->loop_lag_over_5ms;
+        std::fprintf(stderr, "[lag] t=%.3fs lag=%.1fms sessions=%lld requests=%lld\n",
+                     std::chrono::duration<double>(Clock::now() - start).count(), lag / 1000.0,
+                     static_cast<long long>(stats_->sessions_active.load()),
+                     static_cast<long long>(stats_->requests.load()));
+      }
+      if (lag > 20000) ++stats_->loop_lag_over_20ms;
     }
   }
 
