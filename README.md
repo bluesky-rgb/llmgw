@@ -43,6 +43,18 @@
 
 完整的范围表（以及原型的实现情况）见 [设计文档第 2 节](docs/design.md#2-范围与边界)。
 
+## 客户端怎么接入
+
+**不需要额外的 SDK**：OpenAI 官方 SDK、LangChain、Dify 等任何支持 OpenAI 接口的工具，把 `base_url` 换成网关地址、`api_key` 换成网关 key 即可。
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://llmgw.internal:8080/v1", api_key="sk-gw-...")
+client.chat.completions.create(model="smart", messages=[{"role": "user", "content": "你好"}])
+```
+
+模型名使用网关的逻辑名（如 `smart`、`fast`），以后网关调整背后的厂商时，应用代码不用改。错误处理、重试、超时、用量查询等见 [客户端接入指南](docs/client-guide.md)。
+
 ## 快速开始（v0.1 原型）
 
 ```bash
@@ -68,6 +80,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | 想了解 | 文档 |
 |---|---|
 | 项目目标、范围、架构、工程设计、各项机制 | [设计文档](docs/design.md) |
+| **应用怎么接入网关**：示例、模型名、请求头、错误与重试、超时 | [客户端接入指南](docs/client-guide.md) |
 | 代码怎么组织、有哪些规范、怎么防止代码腐化 | [代码架构与可维护性规范](docs/code-architecture.md) |
 | 怎样做到加厂商、加功能不改核心代码 | [可扩展与可插拔设计](docs/extensibility.md) |
 | 会出哪些故障、怎么防护、怎么降级、怎么验证 | [稳定性设计](docs/stability.md) |

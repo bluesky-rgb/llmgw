@@ -6,7 +6,7 @@
 | 当前代码 | v0.1 原型（cpp-httplib，线程池阻塞模型），用于验证功能和作为性能对照组 |
 | 目标版本 | v1.0（Asio 协程，见[里程碑](#9-里程碑)） |
 | 首批上游 | OpenAI（GPT）、MiniMax（国内站）、小米 MiMo（Token Plan），见 [上游厂商适配说明](providers.md) |
-| 相关文档 | [代码架构与可维护性规范](code-architecture.md) · [生产就绪检查清单](production-readiness.md) · [可扩展与可插拔](extensibility.md) · [稳定性设计](stability.md) · [监控、日志与统计](observability.md) · [上游厂商适配](providers.md) · [并发方案图解](concurrency-explained.md) · [分析与设计图](diagrams.md) · [设计决策记录](decisions.md) · [原型使用手册](usage.md) |
+| 相关文档 | [客户端接入指南](client-guide.md) · [代码架构与可维护性规范](code-architecture.md) · [生产就绪检查清单](production-readiness.md) · [可扩展与可插拔](extensibility.md) · [稳定性设计](stability.md) · [监控、日志与统计](observability.md) · [上游厂商适配](providers.md) · [并发方案图解](concurrency-explained.md) · [分析与设计图](diagrams.md) · [设计决策记录](decisions.md) · [原型使用手册](usage.md) |
 
 ## 目录
 
@@ -91,6 +91,9 @@
 |---|---|---|---|
 | 接口 | `POST /v1/chat/completions` | 流式和非流式，兼容 OpenAI SDK | ✅ |
 | 接口 | `GET /v1/models` | 列出配置的模型 | ✅ |
+| 接口 | 三个平面分端口 | 数据面 8080、管理面 9090（只在内网）、观测面 9100（见 [3.6](#36-客户端交互与接口契约)） | ⬜ |
+| 接口 | 客户端契约 | `x-should-retry` 重试提示、额度响应头、实际上游响应头、用量标签 | ⬜ |
+| 接口 | `GET /v1/llmgw/usage` | 客户端用自己的 key 查询自己的用量和预算剩余 | ⬜ |
 | 上游 | OpenAI 兼容服务 | 首批验证 **OpenAI（GPT）、MiniMax（国内站）、小米 MiMo（Token Plan）**；其他兼容服务（llama.cpp、vLLM 等）理论上可用。见 [providers.md](providers.md) | ✅ |
 | 上游 | 厂商差异适配 | 每个目标可以删除、改名、强制设置请求参数；识别响应体中的业务错误码；按模型设置超时（见 [6.12](#612-厂商适配)） | ⬜ |
 | 路由 | 模型路由与名称映射 | 对外模型名 → 按顺序排列的上游目标列表 | ✅ |
@@ -312,6 +315,86 @@ v1.0 提供两种部署方案，都不依赖 Redis：
 - 需要精确的全局预算和限流时，使用 v1.x 的 Redis 方案
 
 部署图见 [diagrams.md 第 10 节](diagrams.md#10-部署图)。部署位置（国内或海外）尚未确定，见 [production-readiness.md 第 0 节](production-readiness.md#0-待决定部署位置)。
+
+### 3.6 客户端交互与接口契约
+
+![客户端如何与网关交互](images/15-client-planes.svg)
+
+#### 不提供自有 SDK
+
+网关对外完全兼容 OpenAI 接口，客户端直接使用 OpenAI 官方 SDK、各类框架和工具，只改 `base_url` 和 `api_key`。理由：
+- **接入成本为零**：现有代码、框架、工具都能直接用
+- **不需要维护多语言 SDK**
+- **不锁定**：应用随时可以绕开网关直连厂商，反过来也一样
+
+网关的额外能力（标签、用量查询等）都通过**可选的**请求头和独立接口提供，不使用它们也不影响正常调用。面向应用开发者的完整说明见 [client-guide.md](client-guide.md)。
+
+#### 三个平面分开
+
+| 平面 | 端口 | 接口 | 使用者 | 暴露范围 | 鉴权 |
+|---|---|---|---|---|---|
+| **数据面** | 8080 | `/v1/chat/completions`、`/v1/models`、`/v1/llmgw/usage` | 业务应用、框架和工具 | 内网，或经过反向代理 | 网关 key |
+| **管理面** | 9090 | `/admin/*` | 管理员（通过 `llmgw` 命令行） | **只在内网**，默认监听 127.0.0.1 | admin key |
+| **观测面** | 9100 | `/metrics`、`/health`、`/ready` | Prometheus、Kubernetes 探针 | 内网 | 无（不含敏感数据） |
+
+分开的好处：业务流量再大也不会挤占管理和监控的通道；管理接口不会因为配置失误暴露到公网；不同平面可以设置不同的网络策略。
+
+#### 接口契约
+
+**请求方向**（全部可选，除了鉴权和 `model`）：
+
+| 字段 | 作用 |
+|---|---|
+| `model` | 网关的**逻辑模型名**（如 `smart`），应用与具体厂商解耦 |
+| `user`（OpenAI 标准字段） | 终端用户 ID，用于按用户统计；网关只保存哈希值 |
+| `X-Request-Id` | 客户端自己的请求 ID，贯穿网关日志 |
+| `X-LLMGW-Tags` | 用量标签（如 `feature=summary`），最多 5 个；用于统计，不作为指标标签（避免高基数） |
+| `traceparent` | 透传给上游 |
+| `X-Stainless-Idempotency-Key` / `Idempotency-Key` | OpenAI 官方 SDK 重试时会自动带上同一个幂等键。v1.0 记录到日志中，用于识别客户端重试；v1.x 用它去重（见下文） |
+
+**响应方向：**
+
+| 响应头 | 作用 |
+|---|---|
+| `X-Request-Id` | 排障凭据 |
+| `X-LLMGW-Provider`、`X-LLMGW-Upstream-Model`、`X-LLMGW-Attempts` | 这次实际由谁处理、尝试了几次 |
+| `x-ratelimit-*` | 当前 key 的额度，字段名与 OpenAI 一致，现有工具能直接识别 |
+| `Retry-After`、`retry-after-ms` | 429、502、503 时的建议等待时间 |
+| **`x-should-retry`** | 明确告诉客户端 SDK 是否应该重试（见下表） |
+
+#### 网关重试与客户端重试的配合
+
+OpenAI 官方 SDK 默认会对连接错误、408、409、429 和所有 5xx 自动重试 2 次，并且会遵守服务端返回的 `x-should-retry` 响应头。如果不加控制，就会出现两个问题：
+1. **重复扣费**：网关为了避免重复扣费返回 504，SDK 却自动重试，钱还是付了两次
+2. **重试放大**：网关内部已经切换过 3 个上游，SDK 再重试 2 次，最坏情况下对上游发起 9 次请求
+
+所以网关在每个错误响应上都明确给出重试提示：
+
+| 情况 | 状态码 | `x-should-retry` | 理由 |
+|---|---|---|---|
+| 客户端的问题（参数、鉴权、预算、模型名、请求过大） | 400、401、402、404、413 | `false` | 重试也不会成功 |
+| 限流、网关过载 | 429、503 | `true`，带 `Retry-After` | 等一会儿就能成功 |
+| 所有上游都失败了 | 502 | `true`，`Retry-After` 至少 5 秒 | 网关已经尽力切换过；延迟重试给上游留出恢复时间，配合重试预算避免放大 |
+| **结果不确定，上游可能已经计费** | 504 | **`false`** | 防止重复扣费，由业务决定是否重新发起 |
+| 网关内部错误 | 500 | `true` | 网关自身的偶发问题，重试通常能成功 |
+
+**v1.x：利用幂等键去重。** 官方 SDK 重试时会带上同一个幂等键。网关可以记住“这个幂等键对应的请求正在处理中或者刚刚完成”：正在处理就让重试等待同一个结果，刚完成就直接返回缓存的结果（仅非流式）。这样客户端因为网络抖动重试时，也不会重复调用上游。
+
+#### 管理员的使用方式
+
+管理员通过 `llmgw` 命令行操作，命令行在底层调用管理面接口：
+
+| 命令 | 作用 |
+|---|---|
+| `llmgw keygen --id app-chatbot` | 生成一个网关 key，输出 key（只显示一次）和要写进配置的哈希值 |
+| `llmgw check -c config.json` | 校验配置 |
+| `llmgw reload` | 让运行中的网关重新加载配置 |
+| `llmgw status` | 查看各 Worker、各上游的状态 |
+| `llmgw usage --by key,model --from 2026-11-01` | 查看用量报表 |
+| `llmgw chat --model smart "你好"` | 冒烟测试：通过网关发一条消息，显示实际的上游、耗时、TTFT |
+
+**发放 key 的流程：** `llmgw keygen` → 把哈希值和额度写进配置 → `llmgw reload` → 把 key 交给应用团队。
+**更换 key 的流程：** 新 key 的哈希加入配置并重新加载（新旧两个 key 同时有效）→ 应用切换到新 key → 从配置中删除旧 key 并重新加载。整个过程不停机。
 
 ---
 
@@ -668,7 +751,8 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 
 ```json
 {
-  "server": { "host": "0.0.0.0", "port": 8080, "workers": 0, "max_connections": 10000 },
+  "server": { "host": "0.0.0.0", "port": 8080, "admin_listen": "127.0.0.1:9090", "observability_listen": "0.0.0.0:9100",
+              "workers": 0, "max_connections": 10000 },
   "timeouts": { "connect": 10, "first_byte": 60, "idle": 60, "total": 600 },
 
   "keys": [
