@@ -191,12 +191,12 @@ flowchart LR
 | ① | Session → config | `ConfigStore::snapshot()` | 取一份配置快照，整个请求期间都用这一份 |
 | ② | Session → middleware | `chain.on_request(ctx)` | 依次执行鉴权、限流、预算；预算中间件向 accounting 冻结预估费用（虚线） |
 | ③ | Session → router | `router.resolve(model)` | 得到按顺序排列的目标列表 |
-| ④ | Session → executor | `executor.execute(ctx, targets, sink)` | 交给执行器，`sink` 是写回客户端的出口 |
+| ④ | Session → executor | `executor.execute(ctx, targets)` | 交给执行器；成功时返回一个 `ResponseStream`（已经拿到上游响应头） |
 | ⑤ | executor → breaker | `breaker.allow()` / `on_success()` / `on_failure()` | 跳过已熔断的上游，并上报结果 |
 | ⑥ | executor → provider | `adapter.build_request(ctx, target)` | 请求改写（删字段、改名、强制设置）和协议适配 |
 | ⑦ | provider → upstream | `pool.acquire(host)`，发送请求 | 从本 Worker 的连接池取连接，发往上游 |
-| ⑧ | upstream → stream | `transcoder.feed(chunk)` | 逐块解析 SSE，旁路提取 usage，响应检查（业务错误码） |
-| ⑨ | stream → Session | `sink.write(chunk)` | 写回客户端；写完才读下一块（背压） |
+| ⑧ | executor → stream | `stream.wrap(head, body)` | 把上游的响应体包装成 `ResponseStream`：逐块解析 SSE、旁路提取 usage、检查业务错误码 |
+| ⑨ | Session → stream | `co_await response.next()` | Session **主动拉取**下一块数据，写给客户端；写完才拉下一块（背压） |
 | ⑩ | Session → middleware | `chain.on_complete(ctx, outcome)` | 按实际用量结算预算、记录指标；无论成功、失败还是客户端中止都会执行 |
 
 **交互规则：**
@@ -207,6 +207,74 @@ flowchart LR
 4. **跨 Worker 共享的只有两个模块**：config（只读快照）和 accounting（预算账本）。其余模块都是每个 Worker 一份，不需要加锁
 5. **observability 是横切关注点**：所有模块都可以上报指标和日志，但它不反过来调用任何业务模块；上报失败也不影响请求处理
 6. **admin 只能通过 config 生效**：管理接口不直接修改其他模块的状态，而是提交新配置，由 ConfigStore 校验后整体替换
+
+#### 调用机制与数据流
+
+![模块调用方式与数据流](images/12-call-and-data-flow.svg)
+
+**一句话：** 全程用协程（`co_await`）调用，不用回调；调用只从上层指向下层，数据作为返回值向上流动；流式数据由 Session **主动拉取**。
+
+**为什么不用回调，也不用“推”的方式：**
+
+| 方式 | 做法 | 问题 |
+|---|---|---|
+| 回调函数 | 下层收到数据后，调用上层传进来的回调 | 逻辑被拆散到多个回调里；对象生命周期难管理（回调执行时上层对象可能已经销毁）；背压难做；下层在运行时反向调用上层 |
+| 推（sink 接口） | 下层调用 `co_await sink.write(chunk)` 把数据推上去 | 可行，背压也能实现；但控制权在下层，“什么时候停、出错了怎么收尾”分散在多个模块里 |
+| **拉（异步迭代器，采用）** | Session 循环调用 `co_await response.next()` | **控制权始终在 Session**：读多快、什么时候停、出错怎么处理，都在一个循环里决定；下层从不调用上层；背压是自然的结果 |
+
+**下层需要“通知”上层的几种情况，都不需要反向调用：**
+
+| 情况 | 做法 |
+|---|---|
+| 返回数据 | 作为函数返回值（`Decision`、`vector<Target>`、`ResponseStream`、`Chunk`） |
+| 返回错误 | 作为返回值：`std::expected<T, Error>`，热路径不抛异常 |
+| 上报指标 | 下层调用 `core` 中定义的 `MetricsRecorder` 接口（依赖倒置：接口由底层定义，Worker 启动时注入实现） |
+| 取消（客户端断开、超时） | 上层通过 `ctx` 里的取消信号通知下层，下层在 `co_await` 处自动结束 |
+
+**依赖方向（编译期）：** `server → middleware / router / executor → provider → upstream / stream → core`。`core` 只定义公共类型和接口（`RequestContext`、`ResponseStream`、`Chunk`、`Error`、`MetricsRecorder`），不依赖任何模块。
+
+**信息共享分三级：**
+
+| 级别 | 存放位置 | 谁能访问 | 是否加锁 |
+|---|---|---|---|
+| 请求级 | `RequestContext`：请求参数、key 标识、配置快照、截止时间、取消信号、尝试记录、用量 | 处理这个请求的协程 | 不需要（只有一个协程访问） |
+| Worker 级 | `WorkerContext`：连接池、熔断器、限流桶、指标分片 | 这个 Worker 上的所有协程 | 不需要（同一线程内轮流执行） |
+| 全局 | `ConfigStore`、`BudgetLedger` | 所有 Worker | 原子操作或极短的锁 |
+
+`RequestContext` 的每个字段**只有一个写入者**，避免模块之间互相覆盖：
+
+| 字段 | 写入者 | 读取者 |
+|---|---|---|
+| `request_id`、`model`、`stream`、`body`、`config`、`deadline` | Session（创建时） | 所有模块 |
+| `key_id`、`limits` | auth 中间件 | ratelimit、budget、日志 |
+| `reservation`（预算冻结额） | budget 中间件 | budget 中间件（结算时） |
+| `attempts`（每次尝试的上游、结果、耗时） | executor | 日志、指标 |
+| `usage`、`ttft` | stream | budget、日志、指标 |
+| `outcome`（终态） | Session | `on_complete` 中的所有中间件 |
+
+**Session 的主流程（示意代码）：**
+
+```cpp
+asio::awaitable<void> Session::handle(HttpRequest req) {
+  RequestContext ctx = make_context(req, config_store_.snapshot());      // ①
+  Decision d = co_await chain_.on_request(ctx);                          // ②
+  if (d.rejected()) {
+    co_await write_error(d.error());
+  } else if (auto targets = router_.resolve(ctx); !targets) {            // ③
+    co_await write_error(targets.error());
+  } else if (auto resp = co_await executor_.execute(ctx, *targets); !resp) {  // ④–⑧
+    co_await write_error(resp.error());
+  } else {
+    co_await write_head(resp->head());
+    while (auto chunk = co_await resp->next()) {                         // ⑨ 拉取
+      co_await client_.write(*chunk);                                    //    写完再拉：背压
+    }
+  }
+  co_await chain_.on_complete(ctx, ctx.outcome);                         // ⑩ 一定执行
+}
+```
+
+重试和切换都发生在 `execute` 内部，并且只在拿到第一个响应头之前进行；`execute` 一旦返回 `ResponseStream`，就不会再切换（见 ADR-003）。
 
 ### 3.3 一个请求的处理流程
 

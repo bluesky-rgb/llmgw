@@ -36,7 +36,7 @@
 <line x1="355" y1="496" x2="355" y2="538" class="arr" marker-end="url(#arrow)"/>
 <line x1="450" y1="468" x2="478" y2="468" class="arr" marker-end="url(#arrow)"/>
 <text class="ts" x="464" y="430" text-anchor="middle" dominant-baseline="central">⑧</text>
-<path d="M560 496 L560 515 L192 515" fill="none" stroke="#534AB7" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M190 515 L560 515 L560 498" fill="none" stroke="#534AB7" stroke-width="1.2" marker-end="url(#arrow)"/>
 <text class="ts" x="500" y="528" text-anchor="middle" dominant-baseline="central">⑨</text>
 <g class="c-gray"><rect x="40" y="606" width="600" height="40" rx="8" stroke-width="0.5"/><text class="th" x="340" y="626" text-anchor="middle" dominant-baseline="central">observability：所有模块上报指标和日志</text></g>
 <rect x="40" y="664" width="12" height="12" rx="2" class="c-purple" stroke-width="0.5"/><text class="ts" x="58" y="674">编排者</text>
