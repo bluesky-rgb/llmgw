@@ -6,7 +6,7 @@
 | 当前代码 | v0.1 原型（cpp-httplib，线程池阻塞模型），用于验证功能和作为性能对照组 |
 | 目标版本 | v1.0（Asio 协程，见[里程碑](#9-里程碑)） |
 | 首批上游 | OpenAI（GPT）、MiniMax（国内站）、小米 MiMo（Token Plan），见 [上游厂商适配说明](providers.md) |
-| 相关文档 | [客户端接入指南](client-guide.md) · [代码架构与可维护性规范](code-architecture.md) · [生产就绪检查清单](production-readiness.md) · [可扩展与可插拔](extensibility.md) · [稳定性设计](stability.md) · [监控、日志与统计](observability.md) · [上游厂商适配](providers.md) · [并发方案图解](concurrency-explained.md) · [分析与设计图](diagrams.md) · [设计决策记录](decisions.md) · [原型使用手册](usage.md) |
+| 相关文档 | [落地计划](roadmap.md) · [客户端接入指南](client-guide.md) · [代码架构与可维护性规范](code-architecture.md) · [生产就绪检查清单](production-readiness.md) · [可扩展与可插拔](extensibility.md) · [稳定性设计](stability.md) · [监控、日志与统计](observability.md) · [上游厂商适配](providers.md) · [并发方案图解](concurrency-explained.md) · [分析与设计图](diagrams.md) · [设计决策记录](decisions.md) · [原型使用手册](usage.md) |
 
 ## 目录
 
@@ -814,17 +814,18 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 
 ## 9. 里程碑
 
-| 里程碑 | 时间 | 交付内容 | 验收标准 |
+> 详细的任务拆分、依赖、完成标准、关口和范围调整规则见 [roadmap.md](roadmap.md)，以那里为准。
+
+| 里程碑 | 时间 | 交付 | 关口 |
 |---|---|---|---|
-| **M1 原型与设计** | 第 1–2 周 | v0.1 原型；设计文档与分析图 | ✅ 已完成 |
-| **M2 性能底座** | 第 3–4 周 | 协程 demo → 接入层与上游层重写、连接池、出站代理、背压、四种超时、异常隔离；扩展点接口与注册表；依赖扫描与静态分析；第一份压测报告 | 达到 1.5 中的并发和内存指标；有和原型的对比数据 |
-| **M3 稳定性与成本** | 第 5–6 周 | 重试规则、重试预算、熔断、舱壁隔离、事件循环看门狗、限流与 key 并发上限、上游配额感知、费用核算、预算（原子持久化）、TTFT 指标、Grafana 看板；三家上游验证、SDK 兼容性测试 | 故障注入测试全部通过 |
-| **M4 运维完善** | 第 7 周 | 热加载、过载保护、内存水位、降级、优雅退出、零停机升级、key 哈希；双实例方案、docker compose / systemd / Kubernetes、系统参数检查；配置与部署文档 | 10 分钟内从零完成部署 |
-| **M5 发布** | 第 8 周 | 过载、长稳、混沌、升级测试；运维手册与上线演练；容量规划；v1.0 发布、压测报告、技术文章 |
+| **M1 原型与设计** | 已完成 | v0.1 原型；全部设计文档 | ✅ |
+| **M2 地基与最小链路** | W1–W3（11/23–12/13） | 协程 demo；新架构的接入层、上游层、执行层；三家上游验证；压测报告 #1 | G1 协程验证、G2 新架构跑通（v0.2） |
+| **M3 稳定性与成本** | W4–W5（12/14–12/27） | 中间件、鉴权、限流、预算、熔断、重试预算、舱壁、配额感知、TTFT、看板、故障注入测试 | G3 稳定可用（v0.3） |
+| **M4 运维完善** | W6（12/28–1/3） | 热加载、过载保护、优雅退出、管理面与命令行、部署方案与文档 | RC |
+| **M5 验证与发布** | W7（1/4–1/10） | 长稳、过载、混沌、升级测试；最终压测报告；运维手册；v1.0 发布 | G4 发布 v1.0 |
+| 缓冲 | W8（1/11–1/17） | 消化延期、修复问题、准备面试材料 | — |
 
-上线前的完整检查项见 [production-readiness.md](production-readiness.md)。 GitHub Release + Docker 镜像 |
-
-甘特图见 [diagrams.md 第 11 节](diagrams.md#11-甘特图)。
+上线前的完整检查项见 [production-readiness.md](production-readiness.md)。
 
 ---
 

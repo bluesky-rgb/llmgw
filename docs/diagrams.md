@@ -495,6 +495,8 @@ flowchart LR
 
 ## 11. 甘特图
 
+> ⚠️ 这张图是早期的计划，已经被 [roadmap.md](roadmap.md) 中的 8 周落地计划取代，以那里为准。
+
 ```mermaid
 gantt
     title llmgw 开发计划
