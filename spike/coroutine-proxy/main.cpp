@@ -1,5 +1,6 @@
 // 协程 demo：每核一个线程 + SO_REUSEPORT + 每条连接一个协程的流式代理。
 // 用法见 README.md；设计与验证见 docs/tasks/0.6-coroutine-demo.md。
+#include <fcntl.h>
 #include <sys/resource.h>
 #include <unistd.h>
 
@@ -18,11 +19,14 @@ namespace spike {
 // 预先把进程的文件描述符表扩到上限。
 // Linux 按 2 的幂扩容 fd 表；多线程进程每次扩容都要等一个 RCU 宽限期（几到十几毫秒），
 // 期间调用线程被阻塞。不预扩容的话，建连高峰期每跨过一个 2 的幂就卡一次（见任务 0.7）。
+// 代价：每个 fd 槽约 8 字节（上限 20000 时约 160 KB）；上限超过 2^20 时只扩到 2^20。
+// 用 F_DUPFD 而不是 dup2：dup2 会先关闭已经打开的目标 fd，F_DUPFD 只取不小于 top 的空闲 fd。
 void pregrow_fd_table() {
   rlimit rl{};
   if (getrlimit(RLIMIT_NOFILE, &rl) != 0 || rl.rlim_cur < 2) return;
   const int top = static_cast<int>(std::min<rlim_t>(rl.rlim_cur, 1 << 20)) - 1;
-  if (dup2(STDERR_FILENO, top) == top) close(top);
+  const int fd = fcntl(STDERR_FILENO, F_DUPFD_CLOEXEC, top);
+  if (fd >= 0) close(fd);
 }
 
 bool parse_seconds(std::string_view s, std::chrono::seconds& out) {
