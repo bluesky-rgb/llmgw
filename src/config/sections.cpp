@@ -142,6 +142,11 @@ ServerConfig read_server(ObjectReader r) {
   if (auto v = r.integer("max_connections", 1, 10'000'000)) {
     s.max_connections = static_cast<std::uint32_t>(*v);
   }
+  if (auto v = r.integer("max_body_bytes", 1024, std::int64_t{1} << 30)) {
+    s.max_body_bytes = static_cast<std::uint64_t>(*v);
+  }
+  if (auto v = r.integer("read_timeout", 1, 3600)) s.read_timeout = Seconds(*v);
+  if (auto v = r.integer("keep_alive_timeout", 1, 3600)) s.keep_alive_timeout = Seconds(*v);
   r.finish();
 
   const std::array<std::pair<const char*, std::uint16_t>, 3> ports{

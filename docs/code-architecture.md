@@ -174,7 +174,7 @@ llmgw_add_module(upstream
 | 内存错误、未定义行为、数据竞争 | ASan + UBSan、TSan | ✅ 已启用 |
 | 模块依赖规则、文件行数 | `tools/check_deps.py` | ✅ 已启用 |
 | 编译警告视为错误 | `-Werror`（`llmgw_add_module`） | ✅ 已启用（新模块和单元测试） |
-| 代码格式 | clang-format 18 | ✅ 已启用（`src/`、`tests/unit/`） |
+| 代码格式 | clang-format 18 | ✅ 已启用（`src/`、`tests/unit/`、`tests/integration/`） |
 | 静态检查（命名、复杂度、协程规则、常见 bug） | clang-tidy 18（[.clang-tidy](../.clang-tidy)） | ✅ 已启用（`src/` 的源文件，以及每个公开头文件；0.4 起覆盖只有头文件的模块） |
 | 每个公开头文件能单独编译 | `llmgw_add_module` 自动为每个头文件生成一个只包含它的 `.cpp`，以 `-Werror` 编译 | ✅ 已启用（0.4） |
 | 覆盖率门槛 | gcov / llvm-cov | M3 启用 |
