@@ -87,6 +87,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | **产品为谁、解决什么问题、和同类项目有什么不同** | [产品定义](docs/product.md) |
 | 项目目标、范围、架构、工程设计、各项机制 | [设计文档](docs/design.md) |
 | **应用怎么接入网关**：示例、模型名、请求头、错误与重试、超时 | [客户端接入指南](docs/client-guide.md) |
+| 每个任务怎么设计、评审、验证、合并 | [开发流程](docs/development-process.md) |
 | 代码怎么组织、有哪些规范、怎么防止代码腐化 | [代码架构与可维护性规范](docs/code-architecture.md) |
 | 怎样做到加厂商、加功能不改核心代码 | [可扩展与可插拔设计](docs/extensibility.md) |
 | 会出哪些故障、怎么防护、怎么降级、怎么验证 | [稳定性设计](docs/stability.md) |
@@ -125,4 +126,4 @@ v1.0 的目标目录结构见 [设计文档 4.1 节](docs/design.md#41-目录结
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE)
