@@ -18,8 +18,29 @@ function(llmgw_fetch_dependency name)
   endif()
   string(JSON tag GET "${LLMGW_DEPENDENCIES_JSON}" dependencies ${name} tag)
   string(JSON header_only GET "${LLMGW_DEPENDENCIES_JSON}" dependencies ${name} header_only)
+  string(JSON url ERROR_VARIABLE no_url GET "${LLMGW_DEPENDENCIES_JSON}" dependencies ${name} url)
 
-  if(header_only)
+  if(NOT no_url)
+    # 按 URL 下载发布包，并校验 SHA-256，防止下载内容被篡改
+    string(JSON sha256 GET "${LLMGW_DEPENDENCIES_JSON}" dependencies ${name} sha256)
+    string(JSON libs ERROR_VARIABLE no_libs GET "${LLMGW_DEPENDENCIES_JSON}" dependencies ${name} libraries)
+    if(NOT no_libs AND name STREQUAL "boost")
+      # 只配置需要的 Boost 库（Asio、Beast 都是纯头文件库）
+      string(JSON n LENGTH "${libs}")
+      math(EXPR last "${n} - 1")
+      set(boost_libs "")
+      foreach(i RANGE ${last})
+        string(JSON lib GET "${libs}" ${i})
+        list(APPEND boost_libs ${lib})
+      endforeach()
+      set(BOOST_INCLUDE_LIBRARIES ${boost_libs} CACHE STRING "" FORCE)
+      set(BOOST_ENABLE_CMAKE ON CACHE BOOL "" FORCE)
+    endif()
+    FetchContent_Declare(${name}
+      URL      ${url}
+      URL_HASH SHA256=${sha256}
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  elseif(header_only)
     FetchContent_Declare(${name}
       GIT_REPOSITORY ${repo}
       GIT_TAG        ${tag}
