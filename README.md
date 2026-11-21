@@ -2,186 +2,95 @@
 
 [![CI](https://github.com/bluesky-rgb/llmgw/actions/workflows/ci.yml/badge.svg)](https://github.com/bluesky-rgb/llmgw/actions/workflows/ci.yml)
 
-一个兼容 OpenAI 接口的大模型网关，一个二进制文件就能跑。它把 OpenAI、DeepSeek、本地 llama.cpp 等多家模型统一到同一个接口后面，负责**故障自动切换、流式转发、鉴权、Token 统计和监控指标**。
+**llmgw 是一个可自部署的大模型网关。** 它把 OpenAI、DeepSeek、通义千问、本地 llama.cpp 等多家模型统一到同一个兼容 OpenAI 的接口后面，负责故障自动切换、流式转发、成本管控和监控。一个二进制文件加一份配置文件就能运行，数据不出自己的服务器。
 
-```
-你的应用 / OpenAI SDK
-        │  POST /v1/chat/completions   (model: "smart")
-        ▼
-   ┌─────────┐   1. 云端模型 A  ──✗ 5xx / 429 / 连接失败
-   │  llmgw  │──▶ 2. 云端模型 B  ──✗
-   └─────────┘   3. 本地 llama.cpp ──✓ 流式返回
-        │
-        └── /metrics → Prometheus / Grafana
-```
+> **项目状态：** v0.1 原型已经可以运行（[使用手册](docs/usage.md)）。v1.0 的设计已经完成，正在开发中，当前阶段是 **M2：性能底座**（[里程碑](docs/design.md#9-里程碑)）。
 
-> 📐 整体设计（目标、架构、模块、里程碑）见 [docs/design.md](docs/design.md)，分析与设计图见 [docs/diagrams.md](docs/diagrams.md)，并发方案图解见 [docs/concurrency-explained.md](docs/concurrency-explained.md)。
+## 解决什么问题
 
-## 功能（v0.1）
+| 问题 | llmgw 的做法 |
+|---|---|
+| 各家模型的接口不统一 | 对外只提供一个 OpenAI 兼容接口，现有 SDK 改一下 `base_url` 就能用 |
+| 某一家宕机或限流，业务就挂了 | 按模型配置备用链路，自动切换；连续失败的上游会被熔断；**按规则重试，不会重复扣费** |
+| 费用失控 | 按 key 统计 Token 和费用，设置日、月预算，超出时拒绝或降级到便宜的模型 |
+| 上游 key 散落在各个应用里 | 应用只拿网关的 key，上游的真实 key 只保存在网关上 |
+| 看不到运行情况 | Prometheus 指标（包括首字延迟 TTFT）、JSON 日志、Grafana 看板 |
 
-- **兼容 OpenAI 接口**：`/v1/chat/completions`、`/v1/models`，现有 SDK 只需改 `base_url`
-- **按模型配置故障切换链**：上游返回 5xx、429 或连接失败时，按顺序自动切到下一个目标
-- **流式输出（SSE）**：数据逐块实时转发，不缓冲；**在第一个字节发出之前**同样可以故障切换
-- **状态码如实转发**：流式请求中上游返回 400，客户端收到的也是 400，而不是 200 加一条错误事件
-- **模型名映射**：对外叫 `smart`，对内可以是 `gpt-4o`、`deepseek-chat` 或本地的 `qwen2.5-7b`
-- **网关鉴权**：客户端使用网关自己的 key，上游的真实 key 不会暴露给应用
-- **Token 统计**：从非流式响应和流式最后一块中解析 `usage`
-- **Prometheus 指标**：请求数、延迟直方图、上游失败次数、Token 用量
-- **结构化日志**：每个请求一行 JSON，带 `request_id`，可透传 `X-Request-Id`
+**为什么用 C++？** 流式输出一条连接要挂一两分钟，网关真正的压力是**大量的长连接**。C++ 加协程可以让单机撑住上万条并发流，每条流只占几十 KB 内存，没有 GC 停顿，部署时也不需要任何语言运行时。详见[设计文档 1.2 节](docs/design.md#12-定位)。
 
-## 快速开始
+## 架构
 
-### 1. 编译
+![llmgw 整体架构](docs/images/01-overall-architecture.svg)
 
-需要 CMake ≥ 3.20、支持 C++17 的编译器，以及 OpenSSL 3（Ubuntu 下安装 `libssl-dev`）。依赖库会自动从 GitHub 下载。
+- **每核一个线程，每条连接一个协程**：线程负责用满多个 CPU 核，协程负责让每个核同时照看大量连接
+- **线程之间尽量不共享数据**：连接池、熔断状态、指标计数都是每个线程一份，不需要加锁
+- **请求依次经过五层**：鉴权、限流、预算 → 路由 → 执行（重试、熔断） → 协议适配 → 流式转发（带背压）
+
+不熟悉这些概念的话，建议先读 [并发方案图解](docs/concurrency-explained.md)，里面用 8 张图从头讲起。
+
+## 范围
+
+| v1.0 支持 | 明确不做 | 以后再做（v1.x） |
+|---|---|---|
+| OpenAI 兼容的对话接口（流式 / 非流式） | TLS 终结（交给 Nginx 等反向代理） | Anthropic 协议适配 |
+| 任意 OpenAI 兼容的上游，包括本地 llama.cpp、vLLM | 存储对话内容 | 多实例部署（Redis） |
+| 模型路由、故障切换、熔断、超时 | 用户体系、Web 管理后台 | Embeddings、Responses API |
+| 连接池、背压、过载保护 | 多租户 SaaS 与计费 | 精确缓存与语义缓存 |
+| 鉴权、限流、费用核算、预算 | 内容审核 | 智能路由、HTTP/2 |
+| 指标、日志、热加载、优雅退出 | Windows / macOS 生产运行 | OpenTelemetry |
+
+完整的范围表（以及原型的实现情况）见 [设计文档第 2 节](docs/design.md#2-范围与边界)。
+
+## 快速开始（v0.1 原型）
 
 ```bash
+# 编译（需要 CMake ≥ 3.20、C++17 编译器、OpenSSL 3）
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
+cmake --build build && ctest --test-dir build
 
-### 2. 配置
-
-```bash
+# 配置并运行
 cp config.example.json config.json
 export OPENAI_API_KEY=sk-...
-export DEEPSEEK_API_KEY=sk-...
-./build/llmgw --config config.json --check   # 只检查配置，不启动
 ./build/llmgw --config config.json
-```
 
-### 3. 调用
-
-```bash
+# 调用
 curl http://127.0.0.1:8080/v1/chat/completions \
-  -H "Authorization: Bearer sk-gw-change-me" \
-  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-gw-change-me" -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","stream":true,"messages":[{"role":"user","content":"你好"}]}'
 ```
 
-使用 OpenAI 官方 Python SDK：
+配置字段、接入本地 llama.cpp、监控指标、Docker 等详见 [原型使用手册](docs/usage.md)。
 
-```python
-from openai import OpenAI
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="sk-gw-change-me")
-for chunk in client.chat.completions.create(
-        model="gpt-4o-mini", stream=True,
-        messages=[{"role": "user", "content": "你好"}]):
-    print(chunk.choices[0].delta.content or "", end="")
-```
+## 文档导航
 
-## 接入本地 llama.cpp
-
-llama.cpp 自带的 `llama-server` 提供 OpenAI 兼容接口，可以直接作为上游：
-
-```bash
-# 在 llama.cpp 目录下
-./build/bin/llama-server -m models/qwen2.5-7b-instruct-q4_k_m.gguf --port 8081
-```
-
-然后在配置中加入：
-
-```json
-{ "name": "local", "base_url": "http://127.0.0.1:8081/v1", "read_timeout_seconds": 600 }
-```
-
-把 `local` 放在某个模型 `targets` 的末尾，云端全部不可用时就会落到本地模型上。
-
-## 配置说明
-
-| 字段 | 说明 |
+| 想了解 | 文档 |
 |---|---|
-| `listen.host` / `listen.port` | 监听地址，默认 `0.0.0.0:8080` |
-| `listen.threads` | 工作线程数，默认 64。**当前版本一个流式请求占用一个线程**，所以它也是最大并发流数 |
-| `api_keys` | 客户端访问网关的密钥列表；为空表示不鉴权（只建议在内网使用） |
-| `providers[].name` | 上游名称，在 `models` 中引用 |
-| `providers[].base_url` | 上游地址，带 `/v1`，与 OpenAI SDK 的 `base_url` 写法相同 |
-| `providers[].api_key_env` | 从哪个环境变量读取上游密钥（推荐）；也可以直接写 `api_key` |
-| `providers[].connect_timeout_seconds` | 连接超时，默认 10 秒 |
-| `providers[].read_timeout_seconds` | 读取超时，默认 300 秒 |
-| `providers[].headers` | 额外发给上游的请求头 |
-| `models[].name` | 对外暴露的模型名 |
-| `models[].targets` | 按顺序尝试的上游列表；`model` 不写时沿用对外模型名 |
-
-### 什么情况会切换
-
-| 情况 | 行为 |
-|---|---|
-| 连接失败、超时 | 切到下一个目标 |
-| HTTP 5xx、429 | 切到下一个目标；如果已经是最后一个，原样返回 |
-| 其他 4xx（参数错误等） | 不切换，原样返回。这是请求本身的问题，换上游也没用 |
-| 流式输出开始后上游中断 | 无法切换，在流末尾追加一条 `error` 事件 |
-| 全部目标都失败 | 返回 502，`code: upstream_unavailable` |
-
-## 接口
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/v1/chat/completions` | 聊天补全，支持 `stream: true` |
-| GET | `/v1/models` | 列出配置中的模型 |
-| GET | `/health` | 健康检查 |
-| GET | `/metrics` | Prometheus 指标 |
-
-响应头 `X-LLMGW-Provider` 表示这次请求最终由哪个上游处理，`X-Request-Id` 用于和日志对应。
-
-## 监控指标
-
-```
-llmgw_requests_total{model, provider, status, stream}
-llmgw_request_duration_ms_bucket{model, le}        # 端到端延迟直方图
-llmgw_upstream_failures_total{provider, reason}    # 每一次失败的上游尝试
-llmgw_tokens_total{model, provider, type}          # prompt / completion
-```
-
-> 流式请求的 usage：llama.cpp 默认会在最后一块中返回；OpenAI 需要请求中带上 `"stream_options": {"include_usage": true}`。
-
-## 代码结构
-
-```
-src/
-  main.cpp       命令行入口、信号处理
-  config.*       配置解析与校验（出错时说明具体哪个字段有问题）
-  gateway.*      HTTP 路由、故障切换、流式转发（核心）
-  sse.*          SSE 按行重组与 usage 提取
-  metrics.*      线程安全的指标收集，输出 Prometheus 格式
-  url.*          base_url 解析
-  logger.*       JSON 结构化日志
-tests/
-  test_main.cpp  单元测试 + 端到端测试（进程内的假上游 + 真实网关）
-docs/
-  decisions.md   设计决策记录
-```
-
-## 测试
-
-测试会在进程内启动一个假上游和一个真实网关，从外部发起 HTTP 请求，覆盖非流式、流式、5xx/429/连接失败切换、错误透传、鉴权和并发流。CI 中同时用 AddressSanitizer、UBSan 和 ThreadSanitizer 运行。
-
-```bash
-ctest --test-dir build --output-on-failure
-```
-
-## Docker
-
-```bash
-docker build -t llmgw .
-docker run -p 8080:8080 -v $PWD/config.json:/etc/llmgw/config.json:ro \
-  -e OPENAI_API_KEY -e DEEPSEEK_API_KEY llmgw
-```
-
-> 注意：容器内的 `127.0.0.1` 指向容器自己。如果要访问宿主机上的 llama.cpp，请使用 `host.docker.internal`，或者加上 `--network host`。
+| 项目目标、范围、架构、工程设计、各项机制 | [设计文档](docs/design.md) |
+| 线程、协程、连接池、背压、预算预留是怎么回事 | [并发方案图解](docs/concurrency-explained.md) |
+| 目标分解、上下文、用例、组件、类、时序、状态、部署、计划等分析图 | [分析与设计图](docs/diagrams.md) |
+| 每个设计决策的背景、选择和代价 | [设计决策记录](docs/decisions.md) |
+| 怎么编译、配置和运行当前的原型 | [原型使用手册](docs/usage.md) |
+| 还有哪些问题没定、哪些文档要补 | [设计文档第 11 节](docs/design.md#11-待补充与开放问题) |
 
 ## 路线图
 
-- [ ] **上游连接池**：目前每次请求都会新建连接（HTTPS 每次都要握手），复用连接可以明显降低延迟
-- [ ] **压测报告**：使用 wrk / k6 测量网关自身增加的延迟（P50/P99）与 QPS，并和直连上游对比
-- [ ] **限流与预算**：按 API key 限制 QPS、Token 数和每日费用
-- [ ] **语义缓存**：相似问题直接返回缓存结果，统计命中率与节省的费用
-- [ ] **熔断**：某个上游连续失败时暂时跳过它，避免每个请求都要先等它超时
-- [ ] **异步 I/O**：从“每个流一个线程”改为基于 Drogon / Boost.Asio 的事件驱动模型，支撑上万并发流
-- [ ] **智能路由**：简单问题走本地小模型，复杂问题走云端大模型
-- [ ] **配置热加载**
+- [x] **M1 原型与设计**：v0.1 原型、设计文档、分析图
+- [ ] **M2 性能底座**：协程重写接入层和上游层、连接池、背压、超时与取消、第一份压测报告
+- [ ] **M3 稳定性与成本**：重试规则、熔断、限流、费用核算、预算、TTFT 指标、Grafana 看板
+- [ ] **M4 运维完善**：热加载、过载保护、优雅退出、key 哈希、docker compose
+- [ ] **M5 发布 v1.0**：压测报告、技术文章、GitHub Release 与 Docker 镜像
+
+## 当前代码结构
+
+```
+src/          v0.1 原型：config、gateway（cpp-httplib）、sse、metrics、url、logger、main
+tests/        单元测试与端到端测试（进程内 mock 上游 + 真实网关）
+docs/         设计文档、图解、分析图、决策记录、使用手册
+.github/      CI：Release、ASan + UBSan、TSan 三套构建
+```
+
+v1.0 的目标目录结构见 [设计文档 4.1 节](docs/design.md#41-目录结构v10-目标)。
 
 ## License
 
-MIT
+[MIT](LICENSE)
