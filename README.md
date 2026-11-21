@@ -1,10 +1,15 @@
-# llmgw：用 C++ 写的轻量大模型网关
+# llmgw
 
 [![CI](https://github.com/bluesky-rgb/llmgw/actions/workflows/ci.yml/badge.svg)](https://github.com/bluesky-rgb/llmgw/actions/workflows/ci.yml)
 
-**llmgw 是一个可自部署的大模型网关。** 它把 OpenAI（GPT）、MiniMax、小米 MiMo 以及本地 llama.cpp 等多家模型统一到同一个兼容 OpenAI 的接口后面，负责故障自动切换、流式转发、成本管控和监控。一个二进制文件加一份配置文件就能运行，数据不出自己的服务器。
+> **一个不会让你多花钱、也不会掉线的大模型网关。**
+> 开源 · 自部署 · 单个二进制
 
-> **项目状态：** v0.1 原型已经可以运行（[使用手册](docs/usage.md)）。v1.0 的设计已经完成，正在开发中，当前阶段是 **M2：性能底座**（[里程碑](docs/design.md#9-里程碑)）。
+llmgw 把 OpenAI（GPT）、MiniMax、小米 MiMo 以及本地 llama.cpp 等多家模型统一到一个兼容 OpenAI 的接口后面。应用只改一下 `base_url` 就能接入；一家出问题时自动换下一家；并且从设计上保证**重试不会重复扣费、预算不会超支、每一笔费用都能查到来源**。
+
+![三大支柱](docs/images/17-value-pillars.svg)
+
+> **项目状态：** v0.1 原型已经可以运行（[使用手册](docs/usage.md)）。v1.0 的设计已经完成，正在开发中，计划 12 月中发布公开的 Alpha 版（[落地计划](docs/roadmap.md)）。产品定位、目标用户和开源策略见 [产品定义](docs/product.md)。
 
 ## 解决什么问题
 
@@ -16,7 +21,7 @@
 | 上游 key 散落在各个应用里 | 应用只拿网关的 key，上游的真实 key 只保存在网关上 |
 | 看不到运行情况 | Prometheus 指标（包括首字延迟 TTFT）、JSON 日志、Grafana 看板 |
 
-**为什么用 C++？** 流式输出一条连接要挂一两分钟，网关真正的压力是**大量的长连接**。C++ 加协程可以让单机撑住上万条并发流，每条流只占几十 KB 内存，没有 GC 停顿，部署时也不需要任何语言运行时。详见[设计文档 1.2 节](docs/design.md#12-定位)。
+**为什么用 C++？** 性能是我们的第二卖点。流式输出一条连接要挂一两分钟，网关真正的压力是**大量的长连接**。C++ 加协程可以让单机撑住上万条并发流，每条流只占几十 KB 内存，没有 GC 停顿，部署时也不需要任何语言运行时。详见[设计文档 1.2 节](docs/design.md#12-定位)。
 
 ## 架构
 
@@ -79,6 +84,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 | 想了解 | 文档 |
 |---|---|
+| **产品为谁、解决什么问题、和同类项目有什么不同** | [产品定义](docs/product.md) |
 | 项目目标、范围、架构、工程设计、各项机制 | [设计文档](docs/design.md) |
 | **应用怎么接入网关**：示例、模型名、请求头、错误与重试、超时 | [客户端接入指南](docs/client-guide.md) |
 | 代码怎么组织、有哪些规范、怎么防止代码腐化 | [代码架构与可维护性规范](docs/code-architecture.md) |
