@@ -52,7 +52,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     auto grant = pool->try_take();
     tcp::socket s(ioc);
     s.assign(tcp::v4(), fds[0]);
-    asio::co_spawn(ioc, consume(Lease(pool, std::make_unique<Connection>(std::move(s))), head_request),
+    asio::co_spawn(ioc,
+                   consume(Lease(pool, std::make_unique<Connection>(std::move(s))), head_request),
                    asio::detached);
     ioc.restart();
     ioc.run();
