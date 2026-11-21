@@ -36,6 +36,7 @@ ServerConfig read_server(ObjectReader r);
 Timeouts read_timeouts(ObjectReader r);
 Provider read_provider(ObjectReader r);
 ProxyConfig read_proxy(ObjectReader r, const EnvLookup& getenv, bool resolve_env);
+UpstreamConfig read_upstream(ObjectReader r);
 ModelConfig read_model(ObjectReader r, const Timeouts& global);
 
 }  // namespace llmgw::config::detail

@@ -91,6 +91,7 @@ TEST(LoadExample, example_config_is_valid_and_fully_parsed) {
   ASSERT_EQ(s.providers.size(), 3U);
   EXPECT_EQ(s.find_provider("openai")->api_key, "k1");
   EXPECT_EQ(s.find_provider("mimo")->base_url.host, "token-plan-cn.xiaomimimo.com");
+  EXPECT_EQ(s.upstream.idle_timeout, Seconds(60));
   const auto& em = s.find_provider("minimax")->error_mapping;
   ASSERT_TRUE(em.has_value());
   EXPECT_EQ(to_string(em->field), "base_resp.status_code");
@@ -124,6 +125,9 @@ TEST(LoadDefaults, missing_sections_use_design_defaults) {
   EXPECT_EQ(s.timeouts, Timeouts{});
   EXPECT_EQ(s.timeouts.first_byte_non_stream, Seconds(300));
   EXPECT_FALSE(s.proxy.https.has_value());
+  EXPECT_EQ(s.upstream, UpstreamConfig{});
+  EXPECT_EQ(s.upstream.idle_timeout, Seconds(60));
+  EXPECT_TRUE(s.find_provider("openai")->ca_file.empty());
   EXPECT_EQ(s.find_model("smart")->targets[0].timeouts, s.timeouts);
 }
 
@@ -203,7 +207,7 @@ TEST(Rules, proxy) {
   auto env = with_env({{"HTTPS_PROXY", "http://127.0.0.1:7890"}, {"OPENAI_API_KEY", "k"}});
   auto r = parse(minimal(R"(, "proxy": {"https": "env"})"), env);
   ASSERT_TRUE(r.ok()) << dump(r);
-  EXPECT_EQ(r.snapshot->proxy.https->port, 7890);
+  EXPECT_EQ(r.snapshot->proxy.https->url.port, 7890);
 
   auto none = parse(minimal(R"(, "proxy": {"https": "env"})"), skip_env());
   ASSERT_TRUE(none.ok());
@@ -356,22 +360,135 @@ TEST(Syntax, unreadable_file_is_reported_with_its_name) {
 
 // ---------- F8：敏感信息 ----------
 
-// 独立审查发现：带认证的代理地址（企业环境常见）的密码会出现在错误信息中，--skip-env 时也会读取
+// 独立审查发现：带认证的代理地址（企业环境常见）的密码会出现在错误信息中，--skip-env 时也会读取。
+// 1.4 起代理认证是合法的配置：不论地址有效与否（包括漏写 "@"
+// 让密码被当成端口），消息中都不能出现密码
 TEST(Secrets, proxy_credentials_never_appear_in_issues) {
-  for (const char* proxy :
-       {"http://alice:S3cr3tP4ss@proxy.corp:3128", "alice:S3cr3tP4ss@proxy.corp:3128"}) {
-    SCOPED_TRACE(proxy);
+  struct Case {
+    const char* proxy;
+    bool valid;
+  };
+  for (const Case c :
+       {Case{"http://alice:S3cr3tP4ss@proxy.corp:3128", true},
+        Case{"alice:S3cr3tP4ss@proxy.corp:3128", false}, Case{"http://alice:S3cr3tP4ss", false},
+        Case{"http://alice:S3cr3tP4ss@proxy.corp:99999", false},
+        Case{"https://alice:S3cr3tP4ss@proxy.corp", false},
+        Case{"http://alice:S3cr3tP4ss@proxy.corp/x", false}}) {
+    SCOPED_TRACE(c.proxy);
     auto r = parse(minimal(R"(, "proxy": {"https": "env"})"),
-                   with_env({{"HTTPS_PROXY", proxy}, {"OPENAI_API_KEY", "k"}}));
-    ASSERT_FALSE(r.ok());
+                   with_env({{"HTTPS_PROXY", c.proxy}, {"OPENAI_API_KEY", "k"}}));
+    EXPECT_EQ(r.ok(), c.valid) << dump(r);
     for (const auto& i : r.issues)
       EXPECT_EQ(i.message.find("S3cr3tP4ss"), std::string::npos) << i.message;
-    auto literal =
-        parse(minimal(std::string(R"(, "proxy": {"https": ")") + proxy + "\"}"), skip_env());
-    ASSERT_FALSE(literal.ok());
-    for (const auto& i : literal.issues)
-      EXPECT_EQ(i.message.find("S3cr3tP4ss"), std::string::npos) << i.message;
+    for (const std::string& extra :
+         {std::string(R"(, "proxy": {"https": ")") + c.proxy + "\"}",
+          std::string(R"(, "proxy": {"per_provider": {"openai": ")") + c.proxy + "\"}}"}) {
+      auto literal = parse(minimal(extra), skip_env());
+      EXPECT_EQ(literal.ok(), c.valid) << dump(literal);
+      for (const auto& i : literal.issues)
+        EXPECT_EQ(i.message.find("S3cr3tP4ss"), std::string::npos) << i.message;
+    }
   }
+}
+
+// 1.4：代理认证、"direct"、NO_PROXY
+TEST(Proxy, credentials_are_percent_decoded) {
+  auto p = parse_proxy_url("http://us%40er:p%3Ass%25w@proxy.corp:3128/");
+  ASSERT_TRUE(p.has_value()) << p.error().message;
+  EXPECT_EQ(p->username, "us@er");
+  EXPECT_EQ(p->password, "p:ss%w");
+  EXPECT_EQ(p->url.host, "proxy.corp");
+  EXPECT_EQ(p->url.port, 3128);
+  auto plain = parse_proxy_url("http://127.0.0.1:7890");
+  ASSERT_TRUE(plain.has_value());
+  EXPECT_TRUE(plain->username.empty());
+  auto no_pass = parse_proxy_url("http://bob@p");
+  ASSERT_TRUE(no_pass.has_value());
+  EXPECT_EQ(no_pass->username, "bob");
+  EXPECT_EQ(no_pass->url.port, 80);
+  EXPECT_FALSE(parse_proxy_url("http://a:%zz@p").has_value());
+  EXPECT_FALSE(parse_proxy_url("http://a:%4@p").has_value());
+  EXPECT_FALSE(parse_proxy_url("http://:pw@p").has_value());
+}
+
+TEST(Proxy, password_in_config_file_is_a_warning) {
+  auto r = parse(minimal(R"(, "proxy": {"https": "http://a:pw@p:1"})"), skip_env());
+  ASSERT_TRUE(r.ok()) << dump(r);
+  const Issue* i = at(r, "proxy.https");
+  ASSERT_NE(i, nullptr);
+  EXPECT_EQ(i->severity, Severity::kWarning);
+  EXPECT_EQ(r.snapshot->proxy.https->password, "pw");
+}
+
+TEST(Proxy, per_provider_direct_and_no_proxy_decide_the_route) {
+  const std::string providers = R"({ "providers": [
+      { "name": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "K" },
+      { "name": "vllm",   "base_url": "http://gpu1.corp.example.com:8000/v1", "api_key_env": "K" },
+      { "name": "local",  "base_url": "http://localhost:8000/v1", "api_key_env": "K" },
+      { "name": "mimo",   "base_url": "https://x.xiaomimimo.com/v1", "api_key_env": "K" } ],
+    "models": [ { "name": "m", "targets": [ { "provider": "openai", "model": "g" } ] } ],
+    "proxy": { "https": "env", "per_provider": { "mimo": "direct" } } })";
+  auto r = parse(providers, with_env({{"K", "k"},
+                                      {"https_proxy", "http://u:p@127.0.0.1:7890"},
+                                      {"no_proxy", " LOCALHOST, .corp.example.com ,, *.nothing"}}));
+  ASSERT_TRUE(r.ok()) << dump(r);
+  const Snapshot& s = *r.snapshot;
+  EXPECT_EQ(s.proxy.no_proxy,
+            (std::vector<std::string>{"localhost", "corp.example.com", "nothing"}));
+  const ProxyUrl* p = s.proxy_for(*s.find_provider("openai"));
+  ASSERT_NE(p, nullptr);
+  EXPECT_EQ(p->url.port, 7890);
+  EXPECT_EQ(p->username, "u");
+  EXPECT_EQ(s.proxy_for(*s.find_provider("vllm")), nullptr) << "子域名匹配 NO_PROXY";
+  EXPECT_EQ(s.proxy_for(*s.find_provider("local")), nullptr) << "NO_PROXY 不区分大小写";
+  EXPECT_EQ(s.proxy_for(*s.find_provider("mimo")), nullptr) << "direct";
+
+  auto all =
+      parse(providers, with_env({{"K", "k"}, {"HTTPS_PROXY", "http://p:1"}, {"NO_PROXY", "*"}}));
+  ASSERT_TRUE(all.ok());
+  EXPECT_EQ(all.snapshot->proxy_for(*all.snapshot->find_provider("openai")), nullptr);
+}
+
+TEST(Proxy, no_proxy_entries_with_ports_brackets_and_dots) {
+  auto r = parse(
+      minimal(R"(, "proxy": {"https": "env"})"),
+      with_env({{"OPENAI_API_KEY", "k"},
+                {"HTTPS_PROXY", "http://p:1"},
+                {"NO_PROXY", "gpu1:8000,[::1],[fe80::2]:443,::3,corp.example.com.,10.0.0.1:80"}}));
+  ASSERT_TRUE(r.ok()) << dump(r);
+  EXPECT_EQ(r.snapshot->proxy.no_proxy, (std::vector<std::string>{"gpu1", "::1", "fe80::2", "::3",
+                                                                  "corp.example.com", "10.0.0.1"}));
+  EXPECT_TRUE(no_proxy_matches("example.com", "api.example.com."));
+  EXPECT_TRUE(no_proxy_matches("example.com.", "example.com."));
+  EXPECT_TRUE(no_proxy_matches("example.com.", "api.example.com"));
+}
+
+TEST(Rules, ipv6_zone_id_is_rejected) {
+  EXPECT_FALSE(parse_url("https://[fe80::1%25eth0]:443/v1").has_value());
+  EXPECT_FALSE(parse_url("https://[fe80::1%eth0]/v1").has_value());
+  EXPECT_TRUE(parse_url("https://[fe80::1]/v1").has_value());
+}
+
+TEST(Proxy, no_proxy_matching) {
+  EXPECT_TRUE(no_proxy_matches("example.com", "example.com"));
+  EXPECT_TRUE(no_proxy_matches("example.com", "api.EXAMPLE.com"));
+  EXPECT_FALSE(no_proxy_matches("example.com", "badexample.com"));
+  EXPECT_FALSE(no_proxy_matches("api.example.com", "example.com"));
+  EXPECT_TRUE(no_proxy_matches("*", "anything"));
+  EXPECT_FALSE(no_proxy_matches("", "x"));
+  EXPECT_TRUE(no_proxy_matches("10.0.0.5", "10.0.0.5"));
+}
+
+TEST(Rules, upstream_section_and_ca_file) {
+  auto r =
+      parse(minimal(R"(, "upstream": {"idle_timeout": 30})", R"(, "ca_file": "/etc/corp-ca.pem")"),
+            skip_env());
+  ASSERT_TRUE(r.ok()) << dump(r);
+  EXPECT_EQ(r.snapshot->upstream.idle_timeout, Seconds(30));
+  EXPECT_EQ(r.snapshot->find_provider("openai")->ca_file, "/etc/corp-ca.pem");
+  expect_error(minimal(R"(, "upstream": {"idle_timeout": 0})"), "upstream.idle_timeout");
+  expect_error(minimal(R"(, "upstream": {"idle": 3})"), "upstream.idle");
+  expect_error(minimal("", R"(, "ca_file": "")"), "providers[0].ca_file");
 }
 
 TEST(Secrets, skip_env_does_not_read_proxy_environment) {

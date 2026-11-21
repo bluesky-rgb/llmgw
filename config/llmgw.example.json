@@ -23,6 +23,7 @@
   ],
 
   "proxy": { "https": "env" },
+  "upstream": { "idle_timeout": 60 },
 
   "models": [
     { "name": "smart", "targets": [

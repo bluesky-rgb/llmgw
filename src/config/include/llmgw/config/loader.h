@@ -71,6 +71,13 @@ std::string to_string(const FieldPath& path);
 /// 解析 http(s) URL。不允许查询参数、片段和用户信息。
 Result<Url> parse_url(std::string_view text);
 
+/// 解析代理地址 "http://[user[:password]@]host[:port][/]"。用户名和密码做百分号解码。
+/// 错误信息中不会出现用户名和密码。
+Result<ProxyUrl> parse_proxy_url(std::string_view text);
+
+/// NO_PROXY 的一项是否匹配主机名（entry 已按 ProxyConfig::no_proxy 的约定规范化）。
+bool no_proxy_matches(std::string_view entry, std::string_view host);
+
 /// 解析监听地址 "host:port"（IPv6 写作 "[::1]:9090"）。
 Result<Endpoint> parse_endpoint(std::string_view text);
 

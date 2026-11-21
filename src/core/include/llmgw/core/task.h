@@ -6,6 +6,13 @@
 
 #include <boost/asio/awaitable.hpp>
 
+// 所有使用 llmgw 头文件的编译单元都必须定义 BOOST_ASIO_NO_DEPRECATED（根 CMakeLists.txt
+// 中统一定义）。 它会改变 Asio 成员函数的返回类型，部分编译单元定义、部分不定义会造成 ODR 违规：
+// 链接器只保留一个版本，其他调用方按错误的调用约定调用（任务 1.4 中 UBSan 发现 this = 0x2）
+#if !defined(BOOST_ASIO_NO_DEPRECATED)
+#error "BOOST_ASIO_NO_DEPRECATED 必须对所有目标统一定义（见根 CMakeLists.txt）"
+#endif
+
 namespace llmgw {
 
 /// 异步函数的返回类型，用法：`Task<int> f() { co_return 1; }`，调用方 `co_await f()`。

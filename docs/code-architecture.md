@@ -157,6 +157,7 @@ llmgw_add_module(upstream
 - 公开头文件只暴露必要的类型和函数；实现细节放在 `.cpp` 或 `internal/` 中
 - 第三方库（Asio、simdjson 等）的类型**尽量不出现在公开头文件中**，必要时使用前置声明或 pimpl，减少编译依赖，也方便以后替换
 - 每个头文件都能单独编译（不依赖包含顺序）
+- **会改变第三方库定义的宏（比如 `BOOST_ASIO_NO_DEPRECATED`）只能在根 `CMakeLists.txt` 中对所有目标统一定义**，不能只给某个模块 `PRIVATE` 定义。部分编译单元定义、部分不定义时，同一个模板在二进制中有两种定义（ODR 违规），链接器只保留一种，另一些调用方按错误的调用约定调用它。任务 1.4 中 `basic_socket::close()` 因此收到了 `this = 0x2`；1.3 的 server 也有同样的问题，只是碰巧被内联掩盖了。`core/task.h` 中用 `#error` 检查
 
 ## 4. 测试规范
 

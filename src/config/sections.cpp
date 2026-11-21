@@ -178,6 +178,28 @@ Timeouts read_timeouts(ObjectReader r) {
   return t;
 }
 
+namespace {
+
+ErrorMapping read_error_mapping(ObjectReader m) {
+  ErrorMapping em;
+  if (auto f = m.string("field", true)) {
+    if (auto fp = read_path(*f, m.path_of("field"), m.diag())) em.field = *fp;
+  }
+  if (m.raw("codes") == nullptr)
+    m.string("codes", true);  // 登记为缺少的必填字段，在 finish() 中报告
+  for_each_entry(m, "codes", [&](const std::string& code, const Json& v, const std::string& path) {
+    if (!v.is_number_integer() || v.get<std::int64_t>() < 400 || v.get<std::int64_t>() > 599) {
+      m.diag()->error(path, "应该是 400–599 之间的 HTTP 状态码，实际是 " + v.dump());
+      return;
+    }
+    em.codes[code] = v.get<int>();
+  });
+  m.finish();
+  return em;
+}
+
+}  // namespace
+
 Provider read_provider(ObjectReader r) {
   Provider p;
   if (auto v = r.string("name", true)) {
@@ -204,68 +226,149 @@ Provider read_provider(ObjectReader r) {
   }
   if (auto v = r.integer("max_connections", 1, 100'000))
     p.max_connections = static_cast<std::uint32_t>(*v);
-  if (auto m = r.object("error_mapping")) {
-    ErrorMapping em;
-    if (auto f = m->string("field", true)) {
-      if (auto fp = read_path(*f, m->path_of("field"), r.diag())) em.field = *fp;
+  if (auto v = r.string("ca_file")) {
+    if (v->empty()) {
+      r.diag()->error(r.path_of("ca_file"), "不能为空；要用系统证书库就不写这个字段");
+    } else {
+      p.ca_file = *v;
     }
-    if (m->raw("codes") == nullptr)
-      m->string("codes", true);  // 登记为缺少的必填字段，在 finish() 中报告
-    for_each_entry(
-        *m, "codes", [&](const std::string& code, const Json& v, const std::string& path) {
-          if (!v.is_number_integer() || v.get<std::int64_t>() < 400 ||
-              v.get<std::int64_t>() > 599) {
-            r.diag()->error(path, "应该是 400–599 之间的 HTTP 状态码，实际是 " + v.dump());
-            return;
-          }
-          em.codes[code] = v.get<int>();
-        });
-    m->finish();
-    p.error_mapping = std::move(em);
   }
+  if (auto m = r.object("error_mapping")) p.error_mapping = read_error_mapping(std::move(*m));
   r.unsupported("quota", "将在 v0.3 提供，任务 2.7");
   r.finish();
   return p;
 }
 
+namespace {
+
+std::optional<std::string> env_either(const EnvLookup& getenv, const char* upper,
+                                      const char* lower) {
+  auto v = getenv(upper);
+  if (!v || v->empty()) v = getenv(lower);
+  return v;
+}
+
+// NO_PROXY="localhost, .corp.example.com,*.internal" → {"localhost", "corp.example.com",
+// "internal"}
+std::string_view trim(std::string_view s) {
+  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())) != 0) s.remove_prefix(1);
+  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())) != 0) s.remove_suffix(1);
+  return s;
+}
+
+// NO_PROXY 的一项规范化为主机名：去掉 "*." 和前导的点、端口（host:8080）、IPv6 的方括号
+// （[::1]、[::1]:8080）、结尾的点（任务 1.4 独立审查）。"*" 保持不变
+std::string_view no_proxy_host(std::string_view item) {
+  if (item == "*") return item;
+  if (item.starts_with("*.")) item.remove_prefix(2);
+  while (item.starts_with('.')) item.remove_prefix(1);
+  if (item.starts_with('[')) {
+    const auto close = item.find(']');
+    item = close == std::string_view::npos ? std::string_view{} : item.substr(1, close - 1);
+  } else if (const auto colon = item.find(':');
+             colon != std::string_view::npos &&
+             item.find(':', colon + 1) == std::string_view::npos) {
+    item = item.substr(0, colon);  // 恰好一个冒号：host:port；多个冒号是不带方括号的 IPv6 地址
+  }
+  while (item.ends_with('.')) item.remove_suffix(1);
+  return item;
+}
+
+// NO_PROXY="localhost, .corp.example.com,*.internal" → {"localhost", "corp.example.com",
+// "internal"}
+std::vector<std::string> parse_no_proxy(std::string_view text) {
+  std::vector<std::string> out;
+  while (!text.empty()) {
+    const auto comma = text.find(',');
+    const std::string_view item = no_proxy_host(trim(text.substr(0, comma)));
+    text = comma == std::string_view::npos ? std::string_view{} : text.substr(comma + 1);
+    if (item.empty()) continue;
+    std::string entry(item);
+    std::transform(entry.begin(), entry.end(), entry.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    out.push_back(std::move(entry));
+  }
+  return out;
+}
+
+}  // namespace
+
+namespace {
+
+// proxy.https：默认代理。"env" 表示读取 HTTPS_PROXY（以及 NO_PROXY）
+void read_default_proxy(ObjectReader& r, const EnvLookup& getenv, bool resolve_env,
+                        ProxyConfig* proxy) {
+  auto v = r.string("https");
+  if (!v) return;
+  std::string text = *v;
+  // 错误信息中只说明来源，不回显代理地址：代理地址中可能带有用户名和密码（独立审查发现）
+  std::string source = "代理地址";
+  const bool from_env = text == "env";
+  if (from_env) {
+    // --skip-env 时不读取任何环境变量（与 LoadOptions::resolve_env 的约定一致）
+    std::optional<std::string> env;
+    if (resolve_env) {
+      env = env_either(getenv, "HTTPS_PROXY", "https_proxy");
+      if (auto no = env_either(getenv, "NO_PROXY", "no_proxy"))
+        proxy->no_proxy = parse_no_proxy(*no);
+    }
+    text = env.value_or("");
+    source = "环境变量 HTTPS_PROXY 中的代理地址";
+  }
+  if (text.empty()) return;
+  auto p = parse_proxy_url(text);
+  if (!p) {
+    r.diag()->error(r.path_of("https"), source + "：" + p.error().message);
+    return;
+  }
+  if (!from_env && !p->password.empty()) {
+    r.diag()->warning(r.path_of("https"),
+                      "代理密码写在了配置文件里；建议改为 \"env\"，通过 HTTPS_PROXY 环境变量提供");
+  }
+  proxy->https = std::move(*p);
+}
+
+// proxy.per_provider 的一项：代理地址或 "direct"
+void read_provider_proxy(Diagnostics* diag, const std::string& name, const Json& v,
+                         const std::string& path, ProxyConfig* proxy) {
+  if (!v.is_string()) {
+    diag->error(path, "应该是代理地址字符串或 \"direct\"，实际是" + type_name(v));
+    return;
+  }
+  const auto text = v.get<std::string>();
+  if (text == "direct") {
+    proxy->per_provider[name] = std::nullopt;  // 这个上游不走代理
+    return;
+  }
+  auto p = parse_proxy_url(text);
+  if (!p) {
+    diag->error(path, p.error().message);
+    return;
+  }
+  if (!p->password.empty()) {
+    diag->warning(path, "代理密码写在了配置文件里，注意不要把配置文件提交到代码仓库");
+  }
+  proxy->per_provider[name] = std::move(*p);
+}
+
+}  // namespace
+
 ProxyConfig read_proxy(ObjectReader r, const EnvLookup& getenv, bool resolve_env) {
   ProxyConfig proxy;
-  if (auto v = r.string("https")) {
-    std::string text = *v;
-    // 错误信息中只说明来源，不回显代理地址：代理地址中可能带有用户名和密码（独立审查发现）
-    std::string source = "代理地址";
-    if (text == "env") {
-      // --skip-env 时不读取任何环境变量（与 LoadOptions::resolve_env 的约定一致）
-      std::optional<std::string> env;
-      if (resolve_env) {
-        env = getenv("HTTPS_PROXY");
-        if (!env || env->empty()) env = getenv("https_proxy");
-      }
-      text = env.value_or("");
-      source = "环境变量 HTTPS_PROXY 中的代理地址";
-    }
-    if (!text.empty()) {
-      if (auto url = parse_url(text)) {
-        proxy.https = *url;
-      } else {
-        r.diag()->error(r.path_of("https"), source + "：" + url.error().message);
-      }
-    }
-  }
+  read_default_proxy(r, getenv, resolve_env, &proxy);
   for_each_entry(r, "per_provider",
                  [&](const std::string& name, const Json& v, const std::string& path) {
-                   if (!v.is_string()) {
-                     r.diag()->error(path, "应该是代理地址字符串，实际是" + type_name(v));
-                     return;
-                   }
-                   if (auto url = parse_url(v.get<std::string>())) {
-                     proxy.per_provider[name] = *url;
-                   } else {
-                     r.diag()->error(path, url.error().message);
-                   }
+                   read_provider_proxy(r.diag(), name, v, path, &proxy);
                  });
   r.finish();
   return proxy;
+}
+
+UpstreamConfig read_upstream(ObjectReader r) {
+  UpstreamConfig u;
+  if (auto v = r.integer("idle_timeout", 1, 3600)) u.idle_timeout = Seconds(*v);
+  r.finish();
+  return u;
 }
 
 TargetConfig read_target(ObjectReader r, const Timeouts& global) {

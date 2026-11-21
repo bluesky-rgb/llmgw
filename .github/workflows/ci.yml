@@ -107,7 +107,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-18 libclang-rt-18-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-18 libclang-rt-18-dev libssl-dev
       - name: Cache third-party sources
         uses: actions/cache@v4
         with:
@@ -122,12 +122,12 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           -DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps
       - name: Build
-        run: cmake --build build --target llmgw_fuzz_config llmgw_fuzz_syntax llmgw_fuzz_chat_fields
+        run: cmake --build build --target llmgw_fuzz_config llmgw_fuzz_syntax llmgw_fuzz_chat_fields llmgw_fuzz_upstream_response
       - name: Fuzz
         run: |
           set -e
           mkdir -p crashes
-          for t in config:config syntax:syntax chat_fields:chat; do
+          for t in config:config syntax:syntax chat_fields:chat upstream_response:upstream; do
             name=${t%%:*}; corpus=${t##*:}
             echo "== $name"
             build/tests/fuzz/llmgw_fuzz_$name tests/fuzz/corpus/$corpus -max_total_time=60 -artifact_prefix=crashes/$name- -print_final_stats=1

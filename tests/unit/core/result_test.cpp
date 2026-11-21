@@ -57,3 +57,20 @@ TEST(Result, works_with_move_only_values) {
 
 }  // namespace
 }  // namespace llmgw
+
+// Expected / unexpected：错误类型不是 Error 时使用（任务 1.4，upstream 的 AttemptError）
+namespace {
+struct OtherError {
+  int code = 0;
+};
+llmgw::Expected<int, OtherError> half(int v) {
+  if (v % 2 != 0) return llmgw::unexpected(OtherError{v});
+  return v / 2;
+}
+}  // namespace
+
+TEST(Expected, carries_a_custom_error_type) {
+  EXPECT_EQ(*half(4), 2);
+  ASSERT_FALSE(half(3).has_value());
+  EXPECT_EQ(half(3).error().code, 3);
+}

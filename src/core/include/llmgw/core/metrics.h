@@ -21,6 +21,8 @@ enum class Counter : std::uint8_t {
   kUpstreamAttempts,    ///< executor：每次上游尝试
   kUpstreamAuthErrors,  ///< executor：上游返回 401/403（上游 key 失效）
   kRejected,            ///< server 等：请求被拒绝（过载、过大 …）
+  /// upstream：每次从连接池取连接的结果（kind = reused / new / queue_timeout），复用率由此算出
+  kUpstreamConnections,
 };
 
 /// 直方图（固定分桶，由实现决定）。
@@ -54,6 +56,7 @@ inline constexpr std::array<std::string_view, 0> kNone{};
 inline constexpr std::array<std::string_view, 1> kProvider{"provider"};
 inline constexpr std::array<std::string_view, 2> kProviderResult{"provider", "result"};
 inline constexpr std::array<std::string_view, 2> kProviderState{"provider", "state"};
+inline constexpr std::array<std::string_view, 2> kProviderKind{"provider", "kind"};
 inline constexpr std::array<std::string_view, 1> kReason{"reason"};
 inline constexpr std::array<std::string_view, 1> kWorker{"worker"};
 }  // namespace metric_labels
@@ -69,6 +72,10 @@ inline constexpr std::array kCounterCatalog{
     CatalogEntry<Counter>{
         Counter::kRejected,
         {"llmgw_rejected_total", "被拒绝的请求数，按原因分类", metric_labels::kReason}},
+    CatalogEntry<Counter>{
+        Counter::kUpstreamConnections,
+        {"llmgw_upstream_connections_total", "从连接池取连接的次数：复用、新建、排队超时",
+         metric_labels::kProviderKind}},
 };
 
 inline constexpr std::array kHistogramCatalog{

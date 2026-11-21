@@ -1,6 +1,8 @@
 // 字段路径、URL、监听地址的语法解析。都是纯函数，不依赖 JSON 库。
+#include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -105,12 +107,16 @@ Result<Url> parse_url(std::string_view text) {
   const auto authority = rest.substr(0, slash);
   if (authority.find('@') != std::string_view::npos) {
     return invalid(
-        "不能在 URL 中写用户名和密码（上游的密钥请通过 api_key_env 提供；代理认证将在任务 1.4 "
-        "中支持）");
+        "不能在 URL 中写用户名和密码（上游的密钥请通过 api_key_env 提供；代理的认证信息写在 proxy "
+        "中）");
   }
   auto hp = split_host_port(authority);
   if (!hp) return fail(hp.error());
   if (hp->first.empty()) return invalid("缺少主机名");
+  if (hp->first.find('%') != std::string_view::npos) {
+    // IPv6 的 zone id（fe80::1%eth0）：证书无法按它校验（任务 1.4 独立审查 R12）
+    return invalid("主机名中不能有 %（不支持 IPv6 的 zone id）");
+  }
   url.host = std::string(hp->first);
   if (!hp->second.empty()) {
     auto port = parse_port(hp->second);
@@ -123,6 +129,81 @@ Result<Url> parse_url(std::string_view text) {
     url.base_path = std::string(path);
   }
   return url;
+}
+
+namespace {
+
+// 百分号解码（RFC 3986 2.1）。格式错误时返回空
+std::optional<std::string> percent_decode(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] != '%') {
+      out += text[i];
+      continue;
+    }
+    unsigned value = 0;
+    if (i + 2 >= text.size()) return std::nullopt;  // "%" 后面不足两个字符
+    const auto* first = text.data() + i + 1;
+    auto [p, ec] = std::from_chars(first, first + 2, value, 16);
+    if (ec != std::errc{} || p != first + 2) return std::nullopt;
+    out += static_cast<char>(value);
+    i += 2;
+  }
+  return out;
+}
+
+}  // namespace
+
+Result<ProxyUrl> parse_proxy_url(std::string_view text) {
+  // 这里的任何错误信息都不回显原文：用户名和密码可能出现在任何位置
+  // （比如漏写了 "@"，密码就被当成了端口号）
+  if (text.starts_with("https://")) {
+    return invalid("不支持 HTTPS 代理（到代理本身的连接用 TLS）；请使用 http:// 代理");
+  }
+  if (!text.starts_with("http://")) return invalid("只支持 HTTP 代理，必须以 http:// 开头");
+  const std::string_view rest = text.substr(7);
+  const auto slash = rest.find('/');
+  std::string_view authority = rest.substr(0, slash);
+  if (slash != std::string_view::npos &&
+      rest.substr(slash).find_first_not_of('/') != std::string_view::npos) {
+    return invalid("代理地址不能带路径，应为 http://[用户名:密码@]主机[:端口]");
+  }
+  ProxyUrl proxy;
+  if (const auto at = authority.rfind('@'); at != std::string_view::npos) {
+    const std::string_view userinfo = authority.substr(0, at);
+    authority = authority.substr(at + 1);
+    const auto colon = userinfo.find(':');
+    auto user = percent_decode(userinfo.substr(0, colon));
+    auto pass = percent_decode(colon == std::string_view::npos ? std::string_view{}
+                                                               : userinfo.substr(colon + 1));
+    if (!user || !pass) return invalid("代理的用户名或密码中有不合法的百分号编码（%XX）");
+    if (user->empty()) return invalid("代理地址中 \"@\" 前面缺少用户名");
+    proxy.username = std::move(*user);
+    proxy.password = std::move(*pass);
+  }
+  auto url = parse_url("http://" + std::string(authority));
+  if (!url) return invalid("代理地址格式不对，应为 http://[用户名:密码@]主机[:端口]");
+  proxy.url = std::move(*url);
+  return proxy;
+}
+
+bool no_proxy_matches(std::string_view entry, std::string_view host) {
+  if (entry == "*") return true;
+  // 完全限定的写法（api.example.com.）：两边都去掉结尾的点（只去一边时，带点的项连自己都匹配不上，模糊测试发现）
+  while (host.ends_with('.')) host.remove_suffix(1);
+  while (entry.ends_with('.')) entry.remove_suffix(1);
+  if (entry.empty() || host.size() < entry.size()) return false;
+  auto lower_equal = [](std::string_view a, std::string_view b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+      return std::tolower(static_cast<unsigned char>(x)) ==
+             std::tolower(static_cast<unsigned char>(y));
+    });
+  };
+  if (host.size() == entry.size()) return lower_equal(host, entry);
+  // 子域名：entry 为 example.com 时匹配 api.example.com，但不匹配 badexample.com
+  return host[host.size() - entry.size() - 1] == '.' &&
+         lower_equal(host.substr(host.size() - entry.size()), entry);
 }
 
 Result<Endpoint> parse_endpoint(std::string_view text) {
