@@ -95,3 +95,38 @@
 4. **启动时、创建线程之前，把 fd 表预扩容到上限**。否则建连高峰期每跨过一个 2 的幂就卡约 10 ms
 5. **连接池是必要条件**：没有连接池，每秒 470 个请求持续一分钟就会耗尽到同一个上游的临时端口
 6. **事件循环延迟要作为指标**（`llmgw_event_loop_lag_seconds`）。本次定位卡顿全靠 demo 里的探针
+
+---
+
+## ADR-007：core 的两个第三方依赖：tl::expected 与 Asio 的 awaitable
+
+**日期**：2026-11-21（任务 0.4）
+
+**背景**：设计文档约定“可能失败的操作返回 `std::expected<T, Error>`”，异步接口返回 `asio::awaitable`。core 原本的定位是“不依赖任何第三方库”。
+
+**问题 1：`std::expected` 在我们的工具链上不可用。** 实测：
+
+| 编译器 | `std::expected` |
+|---|---|
+| GCC 13，C++20 | ❌ 需要 C++23 |
+| GCC 13，C++23 | ✅ |
+| Clang 18 + libstdc++ 13，C++23 | ❌ libstdc++ 要求的 concepts 版本高于 Clang 18 的声明，`<expected>` 被禁用 |
+
+CI 的 clang-tidy 使用 Clang 18（Ubuntu 24.04 默认），所以即使升级到 C++23 也不能用。
+
+**选择 1**：使用 **tl::expected v1.3.1**（CC0 许可、单头文件、接口与 `std::expected` 一致），通过别名 `llmgw::Result<T>` 和辅助函数 `llmgw::fail()` 使用，**代码中不直接写 `tl::`**。
+
+| 备选 | 为什么不选 |
+|---|---|
+| 升级到 C++23 + Clang 19 | Ubuntu 24.04 默认工具链不能编译，用户从源码构建的门槛提高 |
+| 自己写 `Result<T>` | 约 200 行容易出错的模板代码（移动语义、`and_then` 等），维护成本高于一个成熟的单头文件库 |
+
+**问题 2：core 要定义异步接口**（`ResponseStream::next()` 等），G1 选定 Asio 后，返回类型只能是 `asio::awaitable`。
+
+**选择 2**：core 依赖 Boost.Asio，但**只使用 `awaitable` 一个类型**，集中在 `task.h` 的别名 `Task<T>` 中；其他头文件只写 `Task`。
+
+**代价**：
+- 默认构建开始下载 Boost（约 100 MB）。CI 按依赖清单缓存 `.deps`，同一份清单只下载一次
+- 多一个依赖 tl::expected，纳入漏洞检查（`tools/check_vulns.py`）
+
+**迁移条件**：最低工具链支持 `std::expected` 时（比如 Clang ≥ 19，或换用 libc++），只修改 `result.h` 中的别名；调用代码不需要改动。

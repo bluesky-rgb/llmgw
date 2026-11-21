@@ -196,15 +196,15 @@ flowchart LR
 | 步骤 | 调用 | 接口（草案） | 说明 |
 |---|---|---|---|
 | ① | Session → config | `ConfigStore::snapshot()` | 取一份配置快照，整个请求期间都用这一份 |
-| ② | Session → middleware | `chain.on_request(ctx)` | 依次执行鉴权、限流、预算；预算中间件向 accounting 冻结预估费用（虚线） |
+| ② | Session → middleware | `chain.on_request(&ctx)` | 依次执行鉴权、限流、预算；预算中间件向 accounting 冻结预估费用（虚线） |
 | ③ | Session → router | `router.resolve(model)` | 得到按顺序排列的目标列表 |
-| ④ | Session → executor | `executor.execute(ctx, targets)` | 交给执行器；成功时返回一个 `ResponseStream`（已经拿到上游响应头） |
+| ④ | Session → executor | `executor.execute(&ctx, targets)` | 交给执行器；成功时返回一个 `ResponseStream`（已经拿到上游响应头） |
 | ⑤ | executor → breaker | `breaker.allow()` / `on_success()` / `on_failure()` | 跳过已熔断的上游，并上报结果 |
 | ⑥ | executor → provider | `adapter.build_request(ctx, target)` | 请求改写（删字段、改名、强制设置）和协议适配 |
 | ⑦ | provider → upstream | `pool.acquire(host)`，发送请求 | 从本 Worker 的连接池取连接，发往上游 |
 | ⑧ | executor → stream | `stream.wrap(head, body)` | 把上游的响应体包装成 `ResponseStream`：逐块解析 SSE、旁路提取 usage、检查业务错误码 |
 | ⑨ | Session → stream | `co_await response.next()` | Session **主动拉取**下一块数据，写给客户端；写完才拉下一块（背压） |
-| ⑩ | Session → middleware | `chain.on_complete(ctx, outcome)` | 按实际用量结算预算、记录指标；无论成功、失败还是客户端中止都会执行 |
+| ⑩ | Session → middleware | `chain.on_complete(&ctx)` | 按实际用量结算预算、记录指标；无论成功、失败还是客户端中止都会执行 |
 
 **交互规则：**
 
@@ -234,9 +234,9 @@ flowchart LR
 | 情况 | 做法 |
 |---|---|
 | 返回数据 | 作为函数返回值（`Decision`、`vector<Target>`、`ResponseStream`、`Chunk`） |
-| 返回错误 | 作为返回值：`std::expected<T, Error>`，热路径不抛异常 |
+| 返回错误 | 作为返回值：`Result<T>`（成功时为 T，失败时为 `Error`，接口与 `std::expected` 相同，见 ADR-007），热路径不抛异常 |
 | 上报指标 | 下层调用 `core` 中定义的 `MetricsRecorder` 接口（依赖倒置：接口由底层定义，Worker 启动时注入实现） |
-| 取消（客户端断开、超时） | 上层通过 `ctx` 里的取消信号通知下层，下层在 `co_await` 处自动结束 |
+| 取消（客户端断开、超时） | Session 对整个请求做一次竞速（ADR-006 结论 1）；一旦断开或超时，Asio 自动取消正在等待的操作，取消沿 `co_await` 链传到下层。下层不需要检查任何标志 |
 
 **依赖方向（编译期）：** `server → middleware / router / executor → provider → upstream / stream → core`。`core` 只定义公共类型和接口（`RequestContext`、`ResponseStream`、`Chunk`、`Error`、`MetricsRecorder`），不依赖任何模块。
 
@@ -244,7 +244,7 @@ flowchart LR
 
 | 级别 | 存放位置 | 谁能访问 | 是否加锁 |
 |---|---|---|---|
-| 请求级 | `RequestContext`：请求参数、key 标识、配置快照、截止时间、取消信号、尝试记录、用量 | 处理这个请求的协程 | 不需要（只有一个协程访问） |
+| 请求级 | `RequestContext`：请求参数、key 标识、配置快照、截止时间、尝试记录、用量、终态（定义见 `src/core/include/llmgw/core/request_context.h`） | 处理这个请求的协程 | 不需要（只有一个协程访问） |
 | Worker 级 | `WorkerContext`：连接池、熔断器、限流桶、指标分片 | 这个 Worker 上的所有协程 | 不需要（同一线程内轮流执行） |
 | 全局 | `ConfigStore`、`BudgetLedger` | 所有 Worker | 原子操作或极短的锁 |
 
@@ -264,12 +264,12 @@ flowchart LR
 ```cpp
 asio::awaitable<void> Session::handle(HttpRequest req) {
   RequestContext ctx = make_context(req, config_store_.snapshot());      // ①
-  Decision d = co_await chain_.on_request(ctx);                          // ②
+  Decision d = co_await chain_.on_request(&ctx);                         // ②
   if (d.rejected()) {
     co_await write_error(d.error());
   } else if (auto targets = router_.resolve(ctx); !targets) {            // ③
     co_await write_error(targets.error());
-  } else if (auto resp = co_await executor_.execute(ctx, *targets); !resp) {  // ④–⑧
+  } else if (auto resp = co_await executor_.execute(&ctx, *targets); !resp) { // ④–⑧
     co_await write_error(resp.error());
   } else {
     co_await write_head(resp->head());
@@ -277,7 +277,7 @@ asio::awaitable<void> Session::handle(HttpRequest req) {
       co_await client_.write(*chunk);                                    //    写完再拉：背压
     }
   }
-  co_await chain_.on_complete(ctx, ctx.outcome);                         // ⑩ 一定执行
+  co_await chain_.on_complete(&ctx);                                     // ⑩ 一定执行（终态在 ctx.outcome）
 }
 ```
 
@@ -436,13 +436,14 @@ llmgw/
 
 ### 4.2 构建与依赖
 
-- **语言标准**：C++20（需要协程）。编译器要求 GCC ≥ 12 或 Clang ≥ 15
+- **语言标准**：C++20（需要协程）。CI 使用 GCC 13 和 Clang 18（Ubuntu 24.04 默认）；`std::expected` 在这个组合下不可用，见 ADR-007
 - **构建**：CMake ≥ 3.24，依赖由 FetchContent 自动下载，版本固定；支持离线指定本地源码目录
 - **依赖**（全部开源许可）：
 
 | 库 | 用途 | 方式 |
 |---|---|---|
-| Boost.Asio / Beast（standalone 或 Boost ≥ 1.84） | 网络、协程、HTTP | FetchContent |
+| Boost.Asio / Beast（Boost 1.92） | 网络、协程、HTTP | FetchContent（发布包 + SHA-256） |
+| tl::expected | `Result<T>` 的实现（ADR-007） | FetchContent（纯头文件） |
 | OpenSSL 3 | TLS | 系统库 |
 | simdjson | 热路径上的 JSON 解析 | FetchContent |
 | nlohmann/json | 配置与构造 JSON | FetchContent |
@@ -452,7 +453,7 @@ llmgw/
 ### 4.3 编码规范
 
 - 格式统一使用 `.clang-format`（Google 风格，每行 100 字符），CI 中检查
-- **热路径不抛异常**：用 `std::expected` 或错误码返回错误；异常只用于启动阶段（配置错误等）
+- **热路径不抛异常**：用 `Result<T>` 返回错误；异常只用于启动阶段（配置错误等）
 - **协程里不能阻塞**：会阻塞的调用必须经过 `BlockingPool`
 - **不跨线程传递 Worker 内的对象**（见[第 5 节](#5-并发与连接设计)）
 - 日志里不能出现 API key 和请求内容
@@ -617,7 +618,7 @@ llmgw/
 
 推理模型（GPT-5.6、MiniMax-M3、MiMo 默认都开启思考）的首字延迟可能长达几十秒；非流式请求更要等整个回答生成完才有响应头。所以非流式请求的 `first_byte` 默认为 300 秒，并且**所有超时都可以按目标单独覆盖**。
 
-**实现方式：** 每个等待操作都和一个定时器“竞速”，谁先完成就用谁的结果（Asio awaitable operators 中的 `||`）。用 `cancellation_signal` 把取消信号传到所有 `co_await` 上。以下情况会立即中断正在等待的操作，不需要等超时：
+**实现方式：** 用 Asio awaitable operators 的 `||` 让等待操作和定时器“竞速”，谁先完成就用谁的结果，其余的被自动取消。**竞速放在请求和尝试的粒度上，不放在每个数据块上**（0.6 实测：每块竞速一次的开销是搬数据本身的 8 倍以上，见 ADR-006）：Session 对整个请求做一次竞速（总截止时间、客户端断开）；executor 对每次尝试做一次竞速（连接、首字节超时）；空闲超时用惰性定时器。以下情况会立即中断正在等待的操作，不需要等超时：
 - 客户端断开连接
 - 总截止时间到期
 - 网关正在退出
