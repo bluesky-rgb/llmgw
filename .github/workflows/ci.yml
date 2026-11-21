@@ -85,6 +85,20 @@ jobs:
       - name: clang-tidy
         if: always()
         run: CLANG_TIDY=clang-tidy-18 tools/run_clang_tidy.sh build
+      # 测试工具（Go）：格式、静态检查、单元测试（含竞态检测）
+      - uses: actions/setup-go@v5
+        if: always()
+        with:
+          go-version-file: tools/mock-upstream/go.mod
+          cache: false
+      - name: mock-upstream (gofmt / vet / test)
+        if: always()
+        working-directory: tools/mock-upstream
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "需要 gofmt 的文件：$unformatted"; exit 1; fi
+          go vet ./...
+          go test -race -count=1 ./...
 
   security:
     name: security
