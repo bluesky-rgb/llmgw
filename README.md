@@ -96,6 +96,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | 线程、协程、连接池、背压、预算预留是怎么回事 | [并发方案图解](docs/concurrency-explained.md) |
 | 目标分解、上下文、用例、组件、类、时序、状态、部署、计划等分析图 | [分析与设计图](docs/diagrams.md) |
 | 每个设计决策的背景、选择和代价 | [设计决策记录](docs/decisions.md) |
+| 性能数据：并发流数、内存、延迟、和原型的对比 | [性能基准](docs/benchmark.md) |
 | 怎么编译、配置和运行当前的原型 | [原型使用手册](docs/usage.md) |
 | 先做什么、怎么排期、落后了先砍什么 | [落地计划](docs/roadmap.md) |
 | 上线前还要做哪些事（按优先级） | [生产就绪检查清单](docs/production-readiness.md) |

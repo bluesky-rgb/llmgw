@@ -279,7 +279,9 @@ class Session {
       << stats_->requests.load() << R"(,"client_aborted":)" << stats_->client_aborted.load()
       << R"(,"upstream_cancelled":)" << stats_->upstream_cancelled.load() << R"(,"timeouts":)"
       << stats_->timeouts.load() << R"(,"upstream_errors":)" << stats_->upstream_errors.load()
-      << R"(,"rss_bytes":)" << detail::rss_bytes() << "}";
+      << R"(,"loop_lag_max_us":)" << stats_->loop_lag_max_us.load() << R"(,"loop_lag_over_5ms":)"
+      << stats_->loop_lag_over_5ms.load() << R"(,"loop_lag_over_20ms":)"
+      << stats_->loop_lag_over_20ms.load() << R"(,"rss_bytes":)" << detail::rss_bytes() << "}";
     return o.str();
   }
 

@@ -28,6 +28,7 @@ struct Options {
   unsigned workers = 0;  // 0 表示等于 CPU 核数
   std::chrono::seconds total_timeout{600};
   std::chrono::seconds idle_timeout{60};
+  bool no_pregrow_fds = false;  // 关闭 fd 表预扩容（只用于对照实验）
 };
 
 // demo 中为了简单使用全局原子计数；正式实现中按 Worker 分片，不需要原子操作。
@@ -38,6 +39,10 @@ struct Stats {
   std::atomic<std::int64_t> upstream_cancelled{0};  // 网关主动取消的上游请求
   std::atomic<std::int64_t> timeouts{0};            // 总超时或空闲超时
   std::atomic<std::int64_t> upstream_errors{0};     // 连接上游失败、上游中途出错
+  // 事件循环延迟：每 10ms 的定时器实际晚醒了多久（任务 0.7 加入，用来定位卡顿）
+  std::atomic<std::int64_t> loop_lag_max_us{0};
+  std::atomic<std::int64_t> loop_lag_over_5ms{0};
+  std::atomic<std::int64_t> loop_lag_over_20ms{0};
 };
 
 }  // namespace spike
