@@ -1,0 +1,13 @@
+# 按从下到上的层次添加模块（顺序与 tools/module_deps.json 的 layers 一致）
+add_subdirectory(core)
+add_subdirectory(config)
+add_subdirectory(observability)
+add_subdirectory(upstream)
+add_subdirectory(stream)
+add_subdirectory(accounting)
+add_subdirectory(router)
+add_subdirectory(provider)
+add_subdirectory(middleware)
+add_subdirectory(executor)
+add_subdirectory(server)
+add_subdirectory(admin)

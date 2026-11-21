@@ -1,6 +1,6 @@
 # v0.1 原型使用手册
 
-> 本文说明**当前 v0.1 原型**的用法。v0.1 基于 cpp-httplib（线程池阻塞模型），用于验证功能，并在 v1.0 中作为性能对照组保留。v1.0 的设计见 [design.md](design.md)，两者的配置格式会有差异。
+> 本文说明**当前 v0.1 原型**的用法。原型的代码在 [`prototype/`](../prototype/) 目录中，编译产物是 `build/prototype/llmgw`。v0.1 基于 cpp-httplib（线程池阻塞模型），用于验证功能，并在 v1.0 中作为性能对照组保留。v1.0 的设计见 [design.md](design.md)，两者的配置格式会有差异。
 
 ## 原型已实现的功能
 
@@ -26,7 +26,7 @@
 
 ## 编译
 
-需要 CMake ≥ 3.20、支持 C++17 的编译器，以及 OpenSSL 3（Ubuntu 下安装 `libssl-dev`）。依赖库会自动从 GitHub 下载。
+需要 CMake ≥ 3.24、支持 C++20 的编译器（新模块使用 C++20，原型本身是 C++17），以及 OpenSSL 3（Ubuntu 下安装 `libssl-dev`）。依赖库会自动从 GitHub 下载。
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -37,19 +37,20 @@ ctest --test-dir build --output-on-failure
 离线构建时，可以指定本地源码目录：
 
 ```bash
-cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_HTTPLIB=/path/to/cpp-httplib \
-                    -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/path/to/json
+cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_CPP_HTTPLIB=/path/to/cpp-httplib \
+                    -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/path/to/json \
+                    -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/path/to/googletest
 ```
 
 ## 运行
 
 ```bash
-cp config.example.json config.json
+cp prototype/config.example.json config.json
 export OPENAI_API_KEY=sk-...
 export MINIMAX_API_KEY=...        # MiniMax 国内站
 export MIMO_API_KEY=tp-...        # 小米 MiMo Token Plan
-./build/llmgw --config config.json --check   # 只检查配置，不启动
-./build/llmgw --config config.json
+./build/prototype/llmgw --config config.json --check   # 只检查配置，不启动
+./build/prototype/llmgw --config config.json
 ```
 
 ## 调用
@@ -144,9 +145,9 @@ llmgw_tokens_total{model, provider, type}          # prompt / completion
 ## Docker
 
 ```bash
-docker build -t llmgw .
+docker build -f prototype/Dockerfile -t llmgw-prototype .
 docker run -p 8080:8080 -v $PWD/config.json:/etc/llmgw/config.json:ro \
-  -e OPENAI_API_KEY -e MINIMAX_API_KEY -e MIMO_API_KEY llmgw
+  -e OPENAI_API_KEY -e MINIMAX_API_KEY -e MIMO_API_KEY llmgw-prototype
 ```
 
 > Dockerfile 还没有实际构建验证过。容器内的 `127.0.0.1` 指向容器自己；如果要访问宿主机上的 llama.cpp，请使用 `host.docker.internal`，或者加上 `--network host`。

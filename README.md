@@ -63,14 +63,14 @@ client.chat.completions.create(model="smart", messages=[{"role": "user", "conten
 ## 快速开始（v0.1 原型）
 
 ```bash
-# 编译（需要 CMake ≥ 3.20、C++17 编译器、OpenSSL 3）
+# 编译（需要 CMake ≥ 3.24、C++20 编译器、OpenSSL 3）
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build && ctest --test-dir build
 
 # 配置并运行（示例配置已包含 GPT、MiniMax 国内站、MiMo Token Plan）
-cp config.example.json config.json
+cp prototype/config.example.json config.json
 export OPENAI_API_KEY=sk-...  MINIMAX_API_KEY=...  MIMO_API_KEY=tp-...
-./build/llmgw --config config.json
+./build/prototype/llmgw --config config.json
 
 # 调用
 curl http://127.0.0.1:8080/v1/chat/completions \
@@ -116,8 +116,11 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ## 当前代码结构
 
 ```
-src/          v0.1 原型：config、gateway（cpp-httplib）、sse、metrics、url、logger、main
-tests/        单元测试与端到端测试（进程内 mock 上游 + 真实网关）
+src/          v1.0 的 12 个模块（目前是骨架：目录、README、CMake 目标、依赖规则）
+tests/        v1.0 的单元测试（GoogleTest）
+prototype/    v0.1 原型（cpp-httplib），作为性能对照组保留
+cmake/        模块函数、依赖清单（dependencies.json）
+tools/        依赖规则、TODO、漏洞扫描、clang-tidy 等检查脚本
 docs/         设计文档、图解、分析图、决策记录、使用手册
 .github/      CI：Release、ASan + UBSan、TSan 三套构建
 ```

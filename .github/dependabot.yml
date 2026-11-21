@@ -1,0 +1,8 @@
+# 只用于更新 GitHub Actions 的版本。C++ 依赖通过 cmake/dependencies.json 管理，
+# 由 tools/check_vulns.py 检查漏洞。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

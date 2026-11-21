@@ -1,0 +1,26 @@
+{
+  "comment": "第三方依赖的唯一清单。cmake/Dependencies.cmake 与 tools/check_vulns.py 都只读这个文件。升级版本只改这里。",
+  "dependencies": {
+    "googletest": {
+      "repo": "https://github.com/google/googletest.git",
+      "tag": "v1.18.0",
+      "license": "BSD-3-Clause",
+      "used_by": "tests",
+      "header_only": false
+    },
+    "nlohmann_json": {
+      "repo": "https://github.com/nlohmann/json.git",
+      "tag": "v3.12.0",
+      "license": "MIT",
+      "used_by": "prototype",
+      "header_only": true
+    },
+    "cpp_httplib": {
+      "repo": "https://github.com/yhirose/cpp-httplib.git",
+      "tag": "v0.67.0",
+      "license": "MIT",
+      "used_by": "prototype",
+      "header_only": true
+    }
+  }
+}

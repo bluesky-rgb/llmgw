@@ -47,6 +47,7 @@ function(llmgw_add_module name)
   endforeach()
   if(ARG_SOURCES)
     target_compile_options(llmgw_${name} PRIVATE
-      $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
+      $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+      $<$<AND:$<BOOL:${LLMGW_WARNINGS_AS_ERRORS}>,$<CXX_COMPILER_ID:GNU,Clang>>:-Werror>)
   endif()
 endfunction()

@@ -1,0 +1,13 @@
+// 由 CMake 根据项目版本生成，请勿手工修改。
+#pragma once
+
+#include <string_view>
+
+namespace llmgw::core {
+
+inline constexpr int kVersionMajor = @PROJECT_VERSION_MAJOR@;
+inline constexpr int kVersionMinor = @PROJECT_VERSION_MINOR@;
+inline constexpr int kVersionPatch = @PROJECT_VERSION_PATCH@;
+inline constexpr std::string_view kVersion = "@PROJECT_VERSION@";
+
+}  // namespace llmgw::core
