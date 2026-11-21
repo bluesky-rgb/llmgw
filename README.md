@@ -15,6 +15,8 @@
         └── /metrics → Prometheus / Grafana
 ```
 
+> 📐 整体设计（目标、架构、模块、里程碑）见 [docs/design.md](docs/design.md)。
+
 ## 功能（v0.1）
 
 - **兼容 OpenAI 接口**：`/v1/chat/completions`、`/v1/models`，现有 SDK 只需改 `base_url`
