@@ -22,3 +22,7 @@ llmgw_fuzz_target(syntax SOURCES syntax_fuzz.cpp LIBS llmgw::config)
 llmgw_fuzz_target(chat_fields SOURCES chat_fields_fuzz.cpp LIBS llmgw::server)
 # chat_fields 测试的是 server 的内部组件 http_util
 target_include_directories(llmgw_fuzz_chat_fields PRIVATE "${CMAKE_SOURCE_DIR}/src/server")
+find_package(OpenSSL 3 REQUIRED)
+# 上游的响应（任务 1.4）：测试 upstream 的内部组件（响应头、响应体的读取）
+llmgw_fuzz_target(upstream_response SOURCES upstream_response_fuzz.cpp LIBS llmgw::upstream Boost::beast OpenSSL::SSL)
+target_include_directories(llmgw_fuzz_upstream_response PRIVATE "${CMAKE_SOURCE_DIR}/src/upstream")

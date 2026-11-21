@@ -69,3 +69,25 @@ target_compile_options(llmgw_integration_tests PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
   $<$<AND:$<BOOL:${LLMGW_WARNINGS_AS_ERRORS}>,$<CXX_COMPILER_ID:GNU,Clang>>:-Werror>)
 gtest_discover_tests(llmgw_integration_tests PROPERTIES TIMEOUT 30)
+
+# upstream 的集成测试：进程内的测试上游（HTTP/HTTPS）和测试代理，证书在测试启动时生成（任务 1.4）
+find_package(OpenSSL 3 REQUIRED)
+add_executable(llmgw_upstream_tests
+  integration/upstream/tls_certs.cpp
+  integration/upstream/test_servers.cpp
+  integration/upstream/pool_test.cpp
+  integration/upstream/failure_test.cpp
+  integration/upstream/stress_test.cpp
+  integration/upstream/perf_test.cpp
+  integration/upstream/review_test.cpp)
+# 审查用例（review_test.cpp）直接测试内部组件（连接池、报文、TLS 身份设置）
+target_include_directories(llmgw_upstream_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/upstream")
+target_link_libraries(llmgw_upstream_tests PRIVATE GTest::gtest_main llmgw::upstream Boost::beast
+                      OpenSSL::SSL OpenSSL::Crypto)
+# GCC 对省略了字段的指定初始化器（{.tls = ...}）也报 missing-field-initializers；测试中大量使用这种写法。
+# mismatched-new-delete：GCC 开优化时对 Asio 协程帧（自带 operator new/delete）组合 && 的误报
+target_compile_options(llmgw_upstream_tests PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Wno-missing-field-initializers>
+  $<$<CXX_COMPILER_ID:GNU>:-Wno-mismatched-new-delete>
+  $<$<AND:$<BOOL:${LLMGW_WARNINGS_AS_ERRORS}>,$<CXX_COMPILER_ID:GNU,Clang>>:-Werror>)
+gtest_discover_tests(llmgw_upstream_tests PROPERTIES TIMEOUT 60)

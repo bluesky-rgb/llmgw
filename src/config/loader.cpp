@@ -154,6 +154,20 @@ const ModelConfig* Snapshot::find_model(std::string_view name) const {
   return it == models.end() ? nullptr : &*it;
 }
 
+const ProxyUrl* Snapshot::proxy_for(const Provider& provider) const {
+  if (auto it = proxy.per_provider.find(provider.name); it != proxy.per_provider.end()) {
+    // 单独配置（包括 "direct"）优先
+    const std::optional<ProxyUrl>& route = it->second;
+    if (!route.has_value()) return nullptr;
+    return &*route;
+  }
+  if (!proxy.https) return nullptr;
+  for (const auto& entry : proxy.no_proxy) {
+    if (no_proxy_matches(entry, provider.base_url.host)) return nullptr;
+  }
+  return &proxy.https.value();
+}
+
 std::size_t LoadReport::error_count() const {
   return static_cast<std::size_t>(std::count_if(
       issues.begin(), issues.end(), [](const Issue& i) { return i.severity == Severity::kError; }));
@@ -195,6 +209,7 @@ LoadReport parse(std::string_view json_text, const LoadOptions& options) {
     if (auto r = top.object("proxy")) {
       snapshot->proxy = detail::read_proxy(std::move(*r), getenv, options.resolve_env);
     }
+    if (auto r = top.object("upstream")) snapshot->upstream = detail::read_upstream(std::move(*r));
     const Timeouts global = snapshot->timeouts;
     read_array(top, "models", &snapshot->models,
                [&](ObjectReader r) { return detail::read_model(std::move(r), global); });

@@ -6,7 +6,6 @@ llmgw_add_module(server
 find_package(Threads REQUIRED)
 llmgw_fetch_dependency(boost)
 target_link_libraries(llmgw_server PUBLIC Boost::asio PRIVATE Boost::beast Threads::Threads)
-target_compile_definitions(llmgw_server PRIVATE BOOST_ASIO_NO_DEPRECATED)
 # simdjson：热路径上从请求体中取 model 和 stream（任务 1.3 S20）
 llmgw_fetch_dependency(simdjson)
 target_link_libraries(llmgw_server PRIVATE simdjson::simdjson)

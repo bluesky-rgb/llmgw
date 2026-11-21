@@ -86,14 +86,39 @@ struct Provider {
   /// 加载时从 api_key_env 读取的密钥。⚠️ 不能写入日志、指标或任何输出。
   /// 加载时跳过了环境变量（llmgw check --skip-env）则为空。
   std::string api_key;
-  std::uint32_t max_connections = 256;  ///< 每个 Worker 到这个上游的最大连接数
+  /// 到这个上游的最大连接数（所有 Worker 合计）。每个 Worker 的上限 = ⌈总数 ÷ Worker 数⌉
+  /// （design.md 5.4；按每个 Worker 计算会让多核机器上的连接数成倍放大）
+  std::uint32_t max_connections = 256;
+  /// 校验该上游证书用的 CA 文件（PEM）；为空时用系统证书库
+  std::string ca_file;
   std::optional<ErrorMapping> error_mapping;
+};
+
+/// HTTP 代理的地址和认证信息。
+struct ProxyUrl {
+  Url url;               ///< 只支持 http://（到代理本身的连接是明文的）
+  std::string username;  ///< 已做百分号解码；为空表示不认证
+  /// ⚠️ 不能写入日志、指标或任何输出
+  std::string password;
+
+  friend bool operator==(const ProxyUrl&, const ProxyUrl&) = default;
 };
 
 /// 出站代理。
 struct ProxyConfig {
-  std::optional<Url> https;  ///< 所有上游默认使用的代理；没有值表示不用代理
-  std::map<std::string, Url> per_provider;  ///< 按上游名覆盖
+  std::optional<ProxyUrl> https;  ///< 所有上游默认使用的代理；没有值表示不用代理
+  /// 按上游名覆盖；值为空（配置中写 "direct"）表示这个上游不走代理
+  std::map<std::string, std::optional<ProxyUrl>> per_provider;
+  /// 不走默认代理的主机（来自 NO_PROXY 环境变量，只在 https 为 "env" 时读取）。
+  /// 已转为小写、去掉前导的 "*." 和 "."；"*" 表示全部
+  std::vector<std::string> no_proxy;
+};
+
+/// 到上游的连接池（design.md 5.4）。
+struct UpstreamConfig {
+  Seconds idle_timeout{60};  ///< 空闲连接超过这个时间就关闭
+
+  friend bool operator==(const UpstreamConfig&, const UpstreamConfig&) = default;
 };
 
 /// 字段改名：from → to。
@@ -130,11 +155,15 @@ struct Snapshot {
   Timeouts timeouts;
   std::vector<Provider> providers;
   ProxyConfig proxy;
+  UpstreamConfig upstream;
   std::vector<ModelConfig> models;
 
   /// 按名字查找；找不到返回 nullptr。返回的指针与快照的生命周期相同。
   [[nodiscard]] const Provider* find_provider(std::string_view name) const;
   [[nodiscard]] const ModelConfig* find_model(std::string_view name) const;
+  /// 这个上游使用的代理：per_provider 优先；其次是默认代理（主机名匹配 no_proxy 时不用）。
+  /// 返回 nullptr 表示直连。
+  [[nodiscard]] const ProxyUrl* proxy_for(const Provider& provider) const;
 };
 
 }  // namespace llmgw::config

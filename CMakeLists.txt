@@ -17,6 +17,12 @@ option(LLMGW_WARNINGS_AS_ERRORS "新模块把编译警告视为错误" ON)
 option(LLMGW_BUILD_SPIKE "构建 spike/（技术验证代码，默认关闭，避免 CI 每次下载 Boost）" OFF)
 option(LLMGW_BUILD_FUZZ "构建 tests/fuzz/（模糊测试，默认关闭；Clang 下使用 libFuzzer）" OFF)
 
+# 必须对所有目标统一定义（不能只在某个模块里 PRIVATE 定义）：这个宏会改变 Asio 一些成员函数的返回类型
+# （比如 basic_socket::close(ec) 返回 void 还是 error_code），而类模板成员函数的返回类型不参与名字修饰，
+# 不一致时链接器只保留一个版本，另一些调用方按错误的调用约定调用它（ODR 违规，任务 1.4 验证时发现：
+# UBSan 报告 this = 0x2）。core/task.h 中检查了这一点
+add_compile_definitions(BOOST_ASIO_NO_DEPRECATED)
+
 include(cmake/Dependencies.cmake)
 include(cmake/LlmgwModule.cmake)
 

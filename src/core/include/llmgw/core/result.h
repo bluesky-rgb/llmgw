@@ -7,6 +7,7 @@
 
 #include <string>
 #include <tl/expected.hpp>
+#include <type_traits>
 #include <utility>
 
 #include "llmgw/core/error.h"
@@ -27,6 +28,17 @@ using Result = tl::expected<T, Error>;
 
 /// 失败结果的类型，用于 `return fail(...)`。
 using Failure = tl::unexpected<Error>;
+
+/// 错误类型不是 Error 时使用（比如 upstream 的 AttemptError 需要携带阶段信息）。
+/// 与 Result 一样，代码中只使用这两个名字，不直接写 tl::（ADR-007）
+template <class T, class E>
+using Expected = tl::expected<T, E>;
+
+/// 构造 Expected 的失败结果：`return unexpected(AttemptError{...});`
+template <class E>
+tl::unexpected<std::decay_t<E>> unexpected(E&& error) {
+  return tl::unexpected<std::decay_t<E>>(std::forward<E>(error));
+}
 
 /// 构造一个失败结果。
 inline Failure fail(Error error) { return Failure(std::move(error)); }
