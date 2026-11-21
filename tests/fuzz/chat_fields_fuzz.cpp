@@ -9,7 +9,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   auto r = llmgw::server::detail::parse_chat_fields(&body);
   if (r && r->model.empty()) __builtin_trap();
   std::mt19937_64 rng(1);
-  (void)llmgw::server::detail::request_id(std::string_view(reinterpret_cast<const char*>(data), size), rng);
+  (void)llmgw::server::detail::request_id(
+      std::string_view(reinterpret_cast<const char*>(data), size), rng);
   (void)llmgw::server::detail::path_of(std::string_view(reinterpret_cast<const char*>(data), size));
   return 0;
 }

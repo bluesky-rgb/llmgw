@@ -335,7 +335,8 @@ TEST(Syntax, reports_line_and_column) {
   EXPECT_EQ(unterminated.issues[0].path.rfind("第 1 行", 0), 0U);
 }
 
-// 模糊测试发现：数字溢出时 nlohmann 抛出的是 out_of_range 而不是 parse_error，此前会让 llmgw check 崩溃
+// 模糊测试发现：数字溢出时 nlohmann 抛出的是 out_of_range 而不是 parse_error，此前会让 llmgw check
+// 崩溃
 TEST(Syntax, number_overflow_is_an_error_not_a_crash) {
   auto r = parse(R"({"timeouts": {"connect": 1e999}})", skip_env());
   ASSERT_EQ(r.issues.size(), 1U) << dump(r);
@@ -357,15 +358,19 @@ TEST(Syntax, unreadable_file_is_reported_with_its_name) {
 
 // 独立审查发现：带认证的代理地址（企业环境常见）的密码会出现在错误信息中，--skip-env 时也会读取
 TEST(Secrets, proxy_credentials_never_appear_in_issues) {
-  for (const char* proxy : {"http://alice:S3cr3tP4ss@proxy.corp:3128", "alice:S3cr3tP4ss@proxy.corp:3128"}) {
+  for (const char* proxy :
+       {"http://alice:S3cr3tP4ss@proxy.corp:3128", "alice:S3cr3tP4ss@proxy.corp:3128"}) {
     SCOPED_TRACE(proxy);
     auto r = parse(minimal(R"(, "proxy": {"https": "env"})"),
                    with_env({{"HTTPS_PROXY", proxy}, {"OPENAI_API_KEY", "k"}}));
     ASSERT_FALSE(r.ok());
-    for (const auto& i : r.issues) EXPECT_EQ(i.message.find("S3cr3tP4ss"), std::string::npos) << i.message;
-    auto literal = parse(minimal(std::string(R"(, "proxy": {"https": ")") + proxy + "\"}"), skip_env());
+    for (const auto& i : r.issues)
+      EXPECT_EQ(i.message.find("S3cr3tP4ss"), std::string::npos) << i.message;
+    auto literal =
+        parse(minimal(std::string(R"(, "proxy": {"https": ")") + proxy + "\"}"), skip_env());
     ASSERT_FALSE(literal.ok());
-    for (const auto& i : literal.issues) EXPECT_EQ(i.message.find("S3cr3tP4ss"), std::string::npos) << i.message;
+    for (const auto& i : literal.issues)
+      EXPECT_EQ(i.message.find("S3cr3tP4ss"), std::string::npos) << i.message;
   }
 }
 

@@ -104,7 +104,9 @@ Result<Url> parse_url(std::string_view text) {
   const auto slash = rest.find('/');
   const auto authority = rest.substr(0, slash);
   if (authority.find('@') != std::string_view::npos) {
-    return invalid("不能在 URL 中写用户名和密码（上游的密钥请通过 api_key_env 提供；代理认证将在任务 1.4 中支持）");
+    return invalid(
+        "不能在 URL 中写用户名和密码（上游的密钥请通过 api_key_env 提供；代理认证将在任务 1.4 "
+        "中支持）");
   }
   auto hp = split_host_port(authority);
   if (!hp) return fail(hp.error());

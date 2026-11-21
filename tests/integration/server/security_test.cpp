@@ -4,18 +4,20 @@
 namespace llmgw::server::test {
 namespace {
 
-std::string chat_body(const std::string& model = "ok") { return R"({"model":")" + model + R"(","stream":true})"; }
+std::string chat_body(const std::string& model = "ok") {
+  return R"({"model":")" + model + R"(","stream":true})";
+}
 
 std::string with_length(const std::string& head_lines, const std::string& body) {
-  return "POST /v1/chat/completions HTTP/1.1\r\nHost: t\r\n" + head_lines + "Content-Length: " +
-         std::to_string(body.size()) + "\r\n\r\n" + body;
+  return "POST /v1/chat/completions HTTP/1.1\r\nHost: t\r\n" + head_lines +
+         "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
 }
 
 std::string chunked(const std::string& te, const std::string& body) {
   char size[16];
   std::snprintf(size, sizeof(size), "%zx", body.size());
-  return "POST /v1/chat/completions HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: " + te + "\r\n\r\n" + size + "\r\n" +
-         body + "\r\n0\r\n\r\n";
+  return "POST /v1/chat/completions HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: " + te + "\r\n\r\n" +
+         size + "\r\n" + body + "\r\n0\r\n\r\n";
 }
 
 // 发送原始请求，返回状态码（没有收到响应时为 0），并检查之后连接被关闭
@@ -37,16 +39,17 @@ TEST_F(ServerTest, ambiguous_framing_is_rejected_and_connection_closed) {
   };
   const Case cases[] = {
       {"Content-Length 与 Transfer-Encoding 同时出现",
-       "POST /v1/chat/completions HTTP/1.1\r\nHost: t\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n" +
+       "POST /v1/chat/completions HTTP/1.1\r\nHost: t\r\nContent-Length: 4\r\nTransfer-Encoding: "
+       "chunked\r\n\r\n" +
            chunked("chunked", body).substr(chunked("chunked", body).find("\r\n\r\n") + 4)},
       {"两个不同的 Content-Length", with_length("Content-Length: 5\r\n", body)},
       {"chunked 不是最后一个编码", chunked("chunked, identity", body)},
       {"不支持的传输编码 gzip", chunked("gzip, chunked", body)},
       {"未知的传输编码", chunked("x-custom", body)},
-      {"冒号前有空格", "POST /v1/chat/completions HTTP/1.1\r\nHost: t\r\nContent-Length : " + std::to_string(body.size()) +
-                           "\r\n\r\n" + body},
-      {"只有 LF 的换行", "POST /v1/chat/completions HTTP/1.1\nHost: t\nContent-Length: " + std::to_string(body.size()) +
-                             "\n\n" + body},
+      {"冒号前有空格", "POST /v1/chat/completions HTTP/1.1\r\nHost: t\r\nContent-Length : " +
+                           std::to_string(body.size()) + "\r\n\r\n" + body},
+      {"只有 LF 的换行", "POST /v1/chat/completions HTTP/1.1\nHost: t\nContent-Length: " +
+                             std::to_string(body.size()) + "\n\n" + body},
   };
   for (const auto& c : cases) {
     SCOPED_TRACE(c.name);
@@ -65,7 +68,8 @@ TEST_F(ServerTest, plain_chunked_request_body_is_accepted) {
   EXPECT_EQ(r.msg.result_int(), 200);
 }
 
-// 上游返回的响应头中带 CR/LF 或非法字符：不能原样转发（否则可以向客户端注入 Set-Cookie 等任意响应头）
+// 上游返回的响应头中带 CR/LF 或非法字符：不能原样转发（否则可以向客户端注入 Set-Cookie
+// 等任意响应头）
 TEST_F(ServerTest, upstream_headers_cannot_inject_response_headers) {
   Client c(server_->data_port());
   c.send(with_length("Connection: close\r\n", chat_body("inject")));
@@ -83,8 +87,10 @@ TEST_F(ServerTest, upstream_headers_cannot_inject_response_headers) {
 TEST_F(ServerTest, absolute_form_target_is_accepted) {
   Client c(server_->data_port());
   const auto body = chat_body();
-  c.send("POST http://gateway.local/v1/chat/completions HTTP/1.1\r\nHost: gateway.local\r\nContent-Length: " +
-         std::to_string(body.size()) + "\r\n\r\n" + body);
+  c.send(
+      "POST http://gateway.local/v1/chat/completions HTTP/1.1\r\nHost: "
+      "gateway.local\r\nContent-Length: " +
+      std::to_string(body.size()) + "\r\n\r\n" + body);
   auto r = c.read_response();
   ASSERT_TRUE(r.ok);
   EXPECT_EQ(r.msg.result_int(), 200);

@@ -27,8 +27,9 @@ TEST(ParseChatFields, reads_model_and_stream) {
 
 // 审查 #12：网关按哪个 model 路由、后面的组件又按哪个处理，不能有歧义（解析器差异）
 TEST(ParseChatFields, rejects_duplicate_keys_and_trailing_content) {
-  for (const char* body : {R"({"model":"cheap","model":"expensive"})", R"({"model":"m","stream":true,"stream":false})",
-                           R"({"model":"m"} trailing)", R"({"model":"m"}{"model":"n"})"}) {
+  for (const char* body :
+       {R"({"model":"cheap","model":"expensive"})", R"({"model":"m","stream":true,"stream":false})",
+        R"({"model":"m"} trailing)", R"({"model":"m"}{"model":"n"})"}) {
     SCOPED_TRACE(body);
     auto r = parse(body);
     EXPECT_FALSE(r) << "应该拒绝";
@@ -132,10 +133,12 @@ constexpr bool kMeasurable = false;
 
 // S20：从请求体中取 model/stream 的开销。打印结果写入验证记录；断言一个下限速度，防止换成慢的实现
 TEST(ParseChatFields, cost_on_typical_and_large_bodies) {
-  // 最坏情况：model 和 stream 排在巨大的 messages 之后，必须跳过整个数组才能找到（审查 #13：原来放在了最前面）
+  // 最坏情况：model 和 stream 排在巨大的 messages 之后，必须跳过整个数组才能找到（审查
+  // #13：原来放在了最前面）
   auto body_of = [](std::size_t bytes) {
     std::string msg(bytes, 'a');
-    return R"({"messages":[{"role":"user","content":")" + msg + R"("}],"model":"smart","stream":true})";
+    return R"({"messages":[{"role":"user","content":")" + msg +
+           R"("}],"model":"smart","stream":true})";
   };
   for (const std::size_t size :
        {std::size_t{10} << 10, std::size_t{1} << 20, std::size_t{32} << 20}) {

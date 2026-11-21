@@ -181,7 +181,8 @@ void Client::send(const std::string& raw) {
 }
 
 bool Client::try_send(const std::string& raw) {
-  return !run([&](auto handler) { asio::async_write(socket_, asio::buffer(raw), handler); }, timeout_);
+  return !run([&](auto handler) { asio::async_write(socket_, asio::buffer(raw), handler); },
+              timeout_);
 }
 
 std::string Client::read_some(std::size_t max) {
@@ -195,10 +196,11 @@ std::string Client::read_some(std::size_t max) {
   std::size_t got = 0;
   auto ec = run(
       [&](auto handler) {
-        socket_.async_read_some(asio::buffer(out), [&, handler](beast::error_code e, std::size_t n) mutable {
-          got = n;
-          handler(e, n);
-        });
+        socket_.async_read_some(asio::buffer(out),
+                                [&, handler](beast::error_code e, std::size_t n) mutable {
+                                  got = n;
+                                  handler(e, n);
+                                });
       },
       timeout_);
   out.resize(ec ? 0 : got);
@@ -211,15 +213,17 @@ std::string Client::read_until_close_or(std::chrono::milliseconds within) {
   const auto deadline = Clock::now() + within;
   std::array<char, 8192> buf{};
   for (;;) {
-    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
+    const auto left =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
     if (left.count() <= 0) return out;
     std::size_t got = 0;
     auto ec = run(
         [&](auto handler) {
-          socket_.async_read_some(asio::buffer(buf), [&, handler](beast::error_code e, std::size_t n) mutable {
-            got = n;
-            handler(e, n);
-          });
+          socket_.async_read_some(asio::buffer(buf),
+                                  [&, handler](beast::error_code e, std::size_t n) mutable {
+                                    got = n;
+                                    handler(e, n);
+                                  });
         },
         left);
     out.append(buf.data(), got);

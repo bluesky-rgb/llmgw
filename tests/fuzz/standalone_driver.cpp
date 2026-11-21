@@ -1,6 +1,7 @@
-// 没有 libFuzzer 时使用的简单驱动：从语料出发做随机变异（翻转、插入、删除、复制字节，以及纯随机输入），
-// 调用同一个 LLVMFuzzerTestOneInput。没有覆盖率引导，但足以发现崩溃和 sanitizer 报告。
-// 用法：driver <语料目录> <秒数> [种子]
+// 没有 libFuzzer
+// 时使用的简单驱动：从语料出发做随机变异（翻转、插入、删除、复制字节，以及纯随机输入）， 调用同一个
+// LLVMFuzzerTestOneInput。没有覆盖率引导，但足以发现崩溃和 sanitizer 报告。 用法：driver <语料目录>
+// <秒数> [种子]
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -29,8 +30,9 @@ int main(int argc, char** argv) {
   const auto seconds = std::atoi(argv[2]);
   std::mt19937_64 rng(argc > 3 ? std::strtoull(argv[3], nullptr, 10) : std::random_device{}());
   auto pick = [&](std::size_t n) { return n == 0 ? 0 : static_cast<std::size_t>(rng() % n); };
-  const std::string interesting[] = {"\"", "\\", "{", "}", "[", "]", ":", ",", "\0", "\r\n", "\xff", "\xe4\xb8",
-                                     "null", "true", "1e999", "-0", "\\u0000", "\\ud800", "[]", ".", "://", "@"};
+  const std::string interesting[] = {
+      "\"",       "\\",   "{",    "}",     "[",  "]",       ":",       ",",  "\0", "\r\n", "\xff",
+      "\xe4\xb8", "null", "true", "1e999", "-0", "\\u0000", "\\ud800", "[]", ".",  "://",  "@"};
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
   std::uint64_t runs = 0;
   while (std::chrono::steady_clock::now() < deadline) {
@@ -70,6 +72,7 @@ int main(int argc, char** argv) {
     LLVMFuzzerTestOneInput(reinterpret_cast<const std::uint8_t*>(s.data()), s.size());
     ++runs;
   }
-  std::printf("完成 %llu 次（%d 秒），没有发现问题\n", static_cast<unsigned long long>(runs), seconds);
+  std::printf("完成 %llu 次（%d 秒），没有发现问题\n", static_cast<unsigned long long>(runs),
+              seconds);
   return 0;
 }
