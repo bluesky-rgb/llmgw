@@ -6,7 +6,7 @@
 | 当前代码 | v0.1 原型（cpp-httplib，线程池阻塞模型），用于验证功能和作为性能对照组 |
 | 目标版本 | v1.0（Asio 协程，见[里程碑](#9-里程碑)） |
 | 首批上游 | OpenAI（GPT）、MiniMax（国内站）、小米 MiMo（Token Plan），见 [上游厂商适配说明](providers.md) |
-| 相关文档 | [生产就绪检查清单](production-readiness.md) · [可扩展与可插拔](extensibility.md) · [稳定性设计](stability.md) · [监控、日志与统计](observability.md) · [上游厂商适配](providers.md) · [并发方案图解](concurrency-explained.md) · [分析与设计图](diagrams.md) · [设计决策记录](decisions.md) · [原型使用手册](usage.md) |
+| 相关文档 | [代码架构与可维护性规范](code-architecture.md) · [生产就绪检查清单](production-readiness.md) · [可扩展与可插拔](extensibility.md) · [稳定性设计](stability.md) · [监控、日志与统计](observability.md) · [上游厂商适配](providers.md) · [并发方案图解](concurrency-explained.md) · [分析与设计图](diagrams.md) · [设计决策记录](decisions.md) · [原型使用手册](usage.md) |
 
 ## 目录
 
@@ -318,6 +318,8 @@ v1.0 提供两种部署方案，都不依赖 Redis：
 ## 4. 工程设计
 
 ### 4.1 目录结构（v1.0 目标）
+
+> 模块的标准结构、依赖规则及其自动检查、编码规范、测试规范、技术债管理，见 [code-architecture.md](code-architecture.md)。
 
 ```
 llmgw/

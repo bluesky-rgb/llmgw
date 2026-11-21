@@ -1,0 +1,31 @@
+{
+  "comment": "模块依赖规则：每个模块只能依赖这里列出的模块。修改本文件需要在 PR 中说明理由，并补充设计决策记录（docs/decisions.md）。",
+  "src_root": "src",
+  "include_prefix": "llmgw",
+  "max_file_lines": 600,
+  "layers": [
+    ["core"],
+    ["config", "observability"],
+    ["upstream", "stream", "accounting"],
+    ["router", "provider"],
+    ["middleware", "executor"],
+    ["server", "admin"],
+    ["app"]
+  ],
+  "modules": {
+    "core":          [],
+    "config":        ["core"],
+    "observability": ["core"],
+    "upstream":      ["core", "config", "observability"],
+    "stream":        ["core", "observability"],
+    "accounting":    ["core", "config", "observability"],
+    "router":        ["core", "config"],
+    "provider":      ["core", "config", "observability", "upstream", "stream"],
+    "middleware":    ["core", "config", "observability", "accounting"],
+    "executor":      ["core", "config", "observability", "provider"],
+    "server":        ["core", "config", "observability", "middleware", "router", "executor"],
+    "admin":         ["core", "config", "observability", "accounting"],
+    "app":           ["core", "config", "observability", "upstream", "stream", "accounting",
+                      "router", "provider", "middleware", "executor", "server", "admin"]
+  }
+}

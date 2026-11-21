@@ -32,3 +32,11 @@ jobs:
         run: cmake --build build
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  architecture:
+    name: architecture
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check module dependency rules
+        run: python3 tools/check_deps.py
