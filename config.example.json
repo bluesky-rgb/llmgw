@@ -1,0 +1,51 @@
+{
+  "listen": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "threads": 64
+  },
+
+  "api_keys": ["sk-gw-change-me"],
+
+  "providers": [
+    {
+      "name": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    {
+      "name": "deepseek",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY"
+    },
+    {
+      "name": "local",
+      "base_url": "http://127.0.0.1:8081/v1",
+      "connect_timeout_seconds": 2,
+      "read_timeout_seconds": 600
+    }
+  ],
+
+  "models": [
+    {
+      "name": "gpt-4o-mini",
+      "targets": [
+        { "provider": "openai", "model": "gpt-4o-mini" },
+        { "provider": "deepseek", "model": "deepseek-chat" }
+      ]
+    },
+    {
+      "name": "deepseek-chat",
+      "targets": [
+        { "provider": "deepseek" },
+        { "provider": "local", "model": "qwen2.5-7b-instruct" }
+      ]
+    },
+    {
+      "name": "local",
+      "targets": [
+        { "provider": "local", "model": "qwen2.5-7b-instruct" }
+      ]
+    }
+  ]
+}
