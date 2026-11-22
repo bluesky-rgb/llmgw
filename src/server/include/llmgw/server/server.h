@@ -19,6 +19,7 @@ namespace llmgw::server {
 /// 一个 Worker 的信息，传给各种工厂函数。
 struct WorkerInfo {
   unsigned index = 0;  ///< 0 … workers-1
+  unsigned worker_count = 1;  ///< Worker 的总数（每个 Worker 的连接池上限 = 总上限 ÷ Worker 数）
   boost::asio::any_io_executor
       executor;  ///< 这个 Worker 的事件循环（Dispatcher 的实现用它建立上游连接）
 };

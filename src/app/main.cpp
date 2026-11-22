@@ -1,4 +1,4 @@
-// llmgw 命令行入口。目前只有 check 子命令（任务 1.1）；serve 等在 1.9、3.4 中加入。
+// llmgw 命令行入口：check（任务 1.1）、serve（任务 1.7）；status、reload 等在 3.4 中加入。
 #include <cstdio>
 #include <string>
 #include <string_view>
@@ -6,6 +6,7 @@
 
 #include "llmgw/config/loader.h"
 #include "llmgw/core/version.h"
+#include "serve.h"
 
 namespace {
 
@@ -16,6 +17,7 @@ constexpr int kUsageError = 2;
 void print_usage() {
   std::fputs(
       "用法：\n"
+      "  llmgw serve [-c 配置文件]                启动网关（Ctrl-C 或 SIGTERM 停止）\n"
       "  llmgw check [-c 配置文件] [--skip-env]   校验配置文件\n"
       "  llmgw version                           显示版本\n"
       "\n"
@@ -68,6 +70,7 @@ int main(int argc, char** argv) {
     return args.empty() ? kUsageError : kOk;
   }
   if (args[0] == "check") return check({args.begin() + 1, args.end()});
+  if (args[0] == "serve") return llmgw::app::serve({args.begin() + 1, args.end()});
   if (args[0] == "version" || args[0] == "--version") {
     std::printf("llmgw %.*s\n", static_cast<int>(llmgw::core::kVersion.size()),
                 llmgw::core::kVersion.data());

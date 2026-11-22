@@ -371,7 +371,7 @@ flowchart TD
 
     Safe --> Budget{"还有剩余目标，<br/>且没超过总超时？"}
     Budget -->|"是"| Next["记录失败，熔断器计数<br/>尝试下一个目标"]
-    Budget -->|"否"| Final["❌ 返回 502<br/>upstream_unavailable"]
+    Budget -->|"否"| Final["❌ 有不确定的尝试：504<br/>最后一次是 429：429（带 Retry-After）<br/>否则 502 upstream_unavailable"]
 
     Next --> Breaker{"下一个目标的<br/>熔断器打开了吗？"}
     Breaker -->|"是，跳过"| Budget

@@ -11,6 +11,7 @@ add_executable(llmgw_unit_tests
   unit/core/request_context_test.cpp
   unit/core/response_stream_test.cpp
   unit/core/metrics_test.cpp
+  unit/core/task_test.cpp
   unit/config/syntax_test.cpp
   unit/config/json_reader_test.cpp
   unit/config/loader_test.cpp
@@ -19,12 +20,15 @@ add_executable(llmgw_unit_tests
   unit/stream/inspect_test.cpp
   unit/stream/stream_test.cpp
   unit/stream/review_test.cpp
-  unit/provider/rewrite_test.cpp)
+  unit/provider/rewrite_test.cpp
+  unit/router/router_test.cpp
+  unit/executor/classify_test.cpp)
 target_link_libraries(llmgw_unit_tests PRIVATE GTest::gtest_main llmgw::core llmgw::config llmgw::server
-                      llmgw::stream llmgw::provider)
+                      llmgw::stream llmgw::provider llmgw::router llmgw::executor)
 # 单元测试可以测试模块内部的组件（比如 config 的 json_reader.h），所以能看到 src/<模块>/ 下的私有头文件
 target_include_directories(llmgw_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/config" "${CMAKE_SOURCE_DIR}/src/server"
-                           "${CMAKE_SOURCE_DIR}/src/stream" "${CMAKE_SOURCE_DIR}/src/provider")
+                           "${CMAKE_SOURCE_DIR}/src/stream" "${CMAKE_SOURCE_DIR}/src/provider"
+                           "${CMAKE_SOURCE_DIR}/src/executor")
 llmgw_fetch_dependency(nlohmann_json)
 target_include_directories(llmgw_unit_tests SYSTEM PRIVATE "${nlohmann_json_SOURCE_DIR}/single_include")
 target_compile_definitions(llmgw_unit_tests PRIVATE LLMGW_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -64,6 +68,14 @@ llmgw_cli_test(unknown_argument_exits_2 ARGS "check|--bogus" EXPECT 2 REQUIRE "�
 llmgw_cli_test(check_never_prints_api_key ARGS "check|-c|${bad}" EXPECT 1 REQUIRE "bad.json"
                FORBID "sk-VERY-SECRET" ENV "OPENAI_API_KEY=sk-VERY-SECRET-1;MINIMAX_API_KEY=sk-VERY-SECRET-2")
 
+# llmgw serve 的进程级冒烟测试（任务 1.7 X19）：真实进程 + Python 写的假上游
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME cli.serve_smoke
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/cli/serve_smoke.py $<TARGET_FILE:llmgw_app>)
+  set_tests_properties(cli.serve_smoke PROPERTIES TIMEOUT 60)
+endif()
+
 # 集成测试：在进程内启动 Server（端口 0），用测试替身代替上游，不访问网络
 add_executable(llmgw_integration_tests
   integration/server/fixture.cpp
@@ -87,10 +99,12 @@ add_executable(llmgw_upstream_tests
   integration/upstream/stress_test.cpp
   integration/upstream/perf_test.cpp
   integration/upstream/review_test.cpp
-  integration/provider/attempt_test.cpp)
+  integration/provider/attempt_test.cpp
+  integration/executor/executor_test.cpp
+  integration/app/gateway_test.cpp)
 # 审查用例（review_test.cpp）直接测试内部组件（连接池、报文、TLS 身份设置）
 target_include_directories(llmgw_upstream_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/upstream")
-target_link_libraries(llmgw_upstream_tests PRIVATE GTest::gtest_main llmgw::upstream llmgw::provider llmgw::config Boost::beast
+target_link_libraries(llmgw_upstream_tests PRIVATE GTest::gtest_main llmgw::upstream llmgw::provider llmgw::executor llmgw::config llmgw_app_lib Boost::beast
                       OpenSSL::SSL OpenSSL::Crypto)
 # provider 的串联测试（任务 1.6 P6）复用这里的测试上游
 target_include_directories(llmgw_upstream_tests SYSTEM PRIVATE "${nlohmann_json_SOURCE_DIR}/single_include")

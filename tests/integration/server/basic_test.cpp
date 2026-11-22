@@ -200,7 +200,10 @@ TEST_F(ServerTest, connections_are_spread_across_workers) {
   for (int i = 0; i < 40 && seen.size() < 2; ++i) {
     Client c(server_->data_port());
     c.post_chat("worker");
-    seen.insert(header(c.read_response().msg, "x-worker"));
+    const auto res = c.read_response();
+    seen.insert(header(res.msg, "x-worker"));
+    // 任务 1.7：Dispatcher 知道一共有几个 Worker（每个 Worker 的连接池上限 = 总上限 ÷ Worker 数）
+    EXPECT_EQ(header(res.msg, "x-worker-count"), "2");
   }
   EXPECT_EQ(seen.size(), 2U) << "40 个连接都落在了同一个 Worker 上";
 }

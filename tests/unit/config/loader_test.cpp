@@ -143,8 +143,19 @@ TEST(Rules, not_yet_supported_sections_are_errors_not_ignored) {
   expect_error(minimal(R"(, "keys": [])"), "keys", "v0.3");
   expect_error(minimal(R"(, "pricing": [])"), "pricing", "尚未支持");
   expect_error(minimal(R"(, "accounting": {})"), "accounting", "尚未支持");
-  expect_error(minimal(R"(, "retry": {})"), "retry", "尚未支持");
   expect_error(minimal("", R"(, "quota": {"rpm": 60})"), "providers[0].quota", "尚未支持");
+}
+
+// 任务 1.7：retry.retry_on_ambiguous（design.md 6.1：结果不确定的失败默认不重试）
+TEST(Rules, retry_section) {
+  auto def = parse(minimal(), skip_env());
+  ASSERT_TRUE(def.ok()) << dump(def);
+  EXPECT_FALSE(def.snapshot->retry.retry_on_ambiguous) << "默认不重试：可能重复计费";
+  auto on = parse(minimal(R"(, "retry": {"retry_on_ambiguous": true})"), skip_env());
+  ASSERT_TRUE(on.ok()) << dump(on);
+  EXPECT_TRUE(on.snapshot->retry.retry_on_ambiguous);
+  expect_error(minimal(R"(, "retry": {"retry_on_ambiguous": 1})"), "retry.retry_on_ambiguous");
+  expect_error(minimal(R"(, "retry": {"budget": 0.2})"), "retry.budget");
 }
 
 TEST(Rules, server_ports_ranges_and_conflicts) {

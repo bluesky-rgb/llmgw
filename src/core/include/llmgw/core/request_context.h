@@ -135,7 +135,10 @@ struct RequestContext {
   std::vector<Attempt> attempts;                         ///< 写入者：executor
   Usage usage;                                           ///< 写入者：stream
   std::optional<SteadyClock::duration> ttft;             ///< 首字延迟。写入者：stream
-  Outcome outcome;                                       ///< 写入者：Session
+  /// 选中的目标的空闲超时（timeouts.idle 可以按目标覆盖）。写入者：executor（返回响应之前）；
+  /// 读取者：Session 的看门狗。为空时用全局的 timeouts.idle
+  std::optional<SteadyClock::duration> upstream_idle;
+  Outcome outcome;  ///< 写入者：Session
 };
 
 }  // namespace llmgw

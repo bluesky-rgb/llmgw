@@ -86,6 +86,10 @@ Task<Result<std::unique_ptr<ResponseStream>>> FakeDispatcher::dispatch(RequestCo
   if (m == "ok") co_return make(sse(3), std::chrono::milliseconds(0), End::kOk);
   if (m == "slow") co_return make(sse(1000), std::chrono::milliseconds(50), End::kOk);
   if (m == "stall") co_return make(sse(1), std::chrono::milliseconds(0), End::kHang);
+  if (m == "stall_short_idle") {  // 任务 1.7：选中的目标自己的空闲超时（比全局的 1 秒短）
+    ctx->upstream_idle = std::chrono::milliseconds(300);
+    co_return make(sse(1), std::chrono::milliseconds(0), End::kHang);
+  }
   if (m == "midfail") co_return make(sse(2), std::chrono::milliseconds(0), End::kError);
   if (m == "big") co_return make(sse(200, 64 * 1024), std::chrono::milliseconds(0), End::kOk);
   if (m == "inject") {  // 上游返回带 CR/LF 的响应头：不能被原样转发给客户端（响应头注入）
@@ -101,6 +105,7 @@ Task<Result<std::unique_ptr<ResponseStream>>> FakeDispatcher::dispatch(RequestCo
   }
   if (m == "worker") {
     head.headers.push_back({"x-worker", std::to_string(info_.index)});
+    head.headers.push_back({"x-worker-count", std::to_string(info_.worker_count)});
     co_return make(sse(1), std::chrono::milliseconds(0), End::kOk);
   }
   if (m == "hang") {

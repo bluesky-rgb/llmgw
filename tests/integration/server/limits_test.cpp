@@ -148,6 +148,17 @@ TEST_F(ServerTest, stalled_upstream_is_cut_after_idle_timeout) {
       << "应该是空闲超时（1 秒）而不是总超时（2 秒）";
 }
 
+// 任务 1.7 X15：空闲超时按选中的目标（ctx->upstream_idle），而不是全局的 timeouts.idle
+TEST_F(ServerTest, stalled_upstream_uses_the_targets_idle_timeout) {
+  Client c(server_->data_port());
+  c.post_chat("stall_short_idle");
+  http::response_parser<http::string_body> p;
+  ASSERT_TRUE(c.read_head(&p));
+  const auto start = Clock::now();
+  EXPECT_TRUE(c.closed_within(milliseconds(2500)));
+  EXPECT_LT(Clock::now() - start, milliseconds(800)) << "应该是目标的 300 ms，而不是全局的 1 秒";
+}
+
 // S10：背压——客户端不读，网关就不再拉取
 TEST_F(ServerTest, slow_reader_applies_backpressure) {
   Client c(server_->data_port());

@@ -210,13 +210,13 @@ LoadReport parse(std::string_view json_text, const LoadOptions& options) {
       snapshot->proxy = detail::read_proxy(std::move(*r), getenv, options.resolve_env);
     }
     if (auto r = top.object("upstream")) snapshot->upstream = detail::read_upstream(std::move(*r));
+    if (auto r = top.object("retry")) snapshot->retry = detail::read_retry(std::move(*r));
     const Timeouts global = snapshot->timeouts;
     read_array(top, "models", &snapshot->models,
                [&](ObjectReader r) { return detail::read_model(std::move(r), global); });
     top.unsupported("keys", "将在 v0.3 提供，任务 2.2", "目前网关不做鉴权，请只在可信网络中使用");
     top.unsupported("pricing", "将在 v0.3 提供，任务 2.4");
     top.unsupported("accounting", "将在 v0.3 提供，任务 2.4");
-    top.unsupported("retry", "将在 v0.3 提供，任务 2.5");
     top.finish();
 
     check_unique(snapshot->providers, "providers", "上游", &diag);

@@ -54,11 +54,6 @@ void set_outcome(RequestContext* ctx, OutcomeKind kind, int status,
   ctx->outcome = Outcome{.kind = kind, .http_status = status, .error = error};
 }
 
-Task<bool> is_cancelled() {
-  co_return (co_await asio::this_coro::cancellation_state).cancelled() !=
-      asio::cancellation_type::none;
-}
-
 }  // namespace
 
 Task<bool> Session::handle_chat(Request request, std::string request_id) {
@@ -122,7 +117,7 @@ Task<bool> Session::relay(Exchange* ex) {
   // 竞速中别的分支已经赢了（客户端断开、总超时）：dispatch 因被取消而返回，这里什么都不能再写，
   // 由赢的那个分支收尾（比如写 504）。否则会出现两份响应，或者 headers_sent 被置为 true 导致 504
   // 写不出去
-  if (co_await is_cancelled()) co_return false;
+  if (is_cancelled(co_await kCancellationState)) co_return false;
   if (!thrown.empty()) {
     std::fprintf(stderr, "[server] request %s: dispatch threw: %s\n",
                  ctx->request.request_id.c_str(), thrown.c_str());
@@ -177,7 +172,7 @@ Task<bool> Session::respond(Exchange* ex, Result<std::unique_ptr<ResponseStream>
     crashed = true;
     thrown = e.what();
   }
-  if (crashed && co_await is_cancelled())
+  if (crashed && is_cancelled(co_await kCancellationState))
     co_return false;  // 被取消后 co_await 抛出的异常，不是错误
   if (crashed) {
     std::fprintf(stderr, "[server] request %s: respond threw: %s\n",
@@ -206,7 +201,9 @@ int unacked_bytes(tcp::socket* socket) {
 }  // namespace
 
 Task<Session::WatchdogFired> Session::watchdog(Exchange* ex, asio::steady_timer* timer) {
-  const SteadyClock::duration idle = ex->ctx->config->timeouts.idle;
+  // 选中的目标自己的空闲超时（executor 写入，任务 1.7），没有时用全局值
+  const SteadyClock::duration idle =
+      ex->ctx->upstream_idle.value_or(SteadyClock::duration(ex->ctx->config->timeouts.idle));
   const SteadyClock::duration write = worker_->config->server.write_timeout;
   // 每次最多睡 min(idle, write)：阶段可能在睡眠期间从“限时长的”变成“限时短的”（比如写响应头时
   // 睡了 60 秒，醒来前已经在等上游，而空闲超时只有 1 秒）。只按当前阶段的期限睡的话就会漏掉。
@@ -257,7 +254,8 @@ Task<Session::PumpResult> Session::pump(Exchange* ex, ResponseStream* stream) {
   const int status = stream->head().status;
   for (;;) {
     Result<std::optional<Chunk>> next = co_await pull(ex, stream);
-    if (!next && co_await is_cancelled()) co_return PumpResult::kStreamError;  // 被取消：不是错误
+    if (!next && is_cancelled(co_await kCancellationState))
+      co_return PumpResult::kStreamError;  // 被取消：不是错误
     if (!next) {
       // 上游中途出错：流式请求发送一条 SSE 错误事件后正常结束；非流式只能断开
       set_outcome(ctx, OutcomeKind::kFailed, status, next.error().code);
@@ -294,7 +292,7 @@ Task<Result<std::optional<Chunk>>> Session::pull(Exchange* ex, ResponseStream* s
     thrown = e.what();
   }
   ex->enter(Exchange::Phase::kOther);
-  if (!thrown.empty() && !co_await is_cancelled()) {
+  if (!thrown.empty() && !is_cancelled(co_await kCancellationState)) {
     std::fprintf(stderr, "[server] request %s: next() threw: %s\n",
                  ex->ctx->request.request_id.c_str(), thrown.c_str());
   }

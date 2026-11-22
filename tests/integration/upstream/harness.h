@@ -53,6 +53,7 @@ class RecordingMetrics final : public MetricsRecorder {
  public:
   std::map<std::string, std::uint64_t> counters;  ///< "名字{标签,…}" → 值
   std::map<std::string, double> gauges;
+  std::uint64_t observed = 0;  ///< 直方图记录的次数
   std::uint64_t counter(Counter id, std::initializer_list<std::string_view> labels) const {
     auto it = counters.find(key(info(id).name, labels));
     return it == counters.end() ? 0 : it->second;
@@ -75,7 +76,7 @@ class RecordingMetrics final : public MetricsRecorder {
   void do_increment(Counter id, LabelValues labels, std::uint64_t n) override {
     counters[key(info(id).name, labels)] += n;
   }
-  void do_observe(Histogram, LabelValues, double) override {}
+  void do_observe(Histogram, LabelValues, double) override { ++observed; }
   void do_set(Gauge id, LabelValues labels, double value) override {
     gauges[key(info(id).name, labels)] = value;
   }

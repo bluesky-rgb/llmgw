@@ -69,7 +69,7 @@ Result<void> Server::start_impl() {
   if (!data) return fail(data.error());
   // 端口为 0 时，第一个 Worker 绑定后由系统分配端口，其余 Worker 绑定同一个端口
   for (unsigned i = 0; i < n; ++i) {
-    auto w = std::make_unique<detail::Worker>(i, o.config, &impl_->shared, o.dispatcher_factory,
+    auto w = std::make_unique<detail::Worker>(i, n, o.config, &impl_->shared, o.dispatcher_factory,
                                               o.metrics_factory);
     if (auto r = w->listen(*data); !r) {
       return fail(ErrorCode::kInternal, "数据面无法监听 " + s.host + ":" +

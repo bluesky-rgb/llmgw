@@ -1,2 +1,2 @@
-# 模块 router：目前还没有源文件，依赖关系已经由 llmgw_add_module 校验
-llmgw_add_module(router DEPS core config)
+# 模块 router：对外的模型名 → 目标列表（任务 1.7）
+llmgw_add_module(router SOURCES failover.cpp DEPS core config)
