@@ -2,7 +2,9 @@
 """汇总编进 llmgw 程序的第三方依赖的许可证全文，随二进制和镜像一起发布（任务 1.10）。
 
 用法：python3 tools/third_party_licenses.py <构建目录> <输出文件>
-     依赖清单来自 cmake/dependencies.json；只用于测试或原型的依赖不包括在内。
+     编进程序的依赖 = src/ 下的 CMakeLists.txt 中 llmgw_fetch_dependency() 的那些（以构建脚本为准，
+     不看依赖清单中的 used_by 说明：说明会过时，nlohmann_json 曾因此被漏掉）。版本、许可证、仓库地址
+     来自 cmake/dependencies.json。
      源码目录按 <构建目录>/CMakeCache.txt 中 FetchContent 的设置确定。找不到许可证文件时失败。
 """
 
@@ -12,7 +14,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-NOT_SHIPPED = {"tests", "prototype"}
 LICENSE_FILE = re.compile(r"^(LICEN[CS]E|COPYING)([-_.].*)?$", re.IGNORECASE)
 
 
@@ -22,6 +23,13 @@ def source_dir(cache: dict[str, str], name: str) -> Path:
     if override:
         return Path(override)
     return Path(cache.get("FETCHCONTENT_BASE_DIR", "")) / f"{name.lower()}-src"
+
+
+def shipped_dependencies() -> set[str]:
+    names = set()
+    for cmake in (ROOT / "src").rglob("CMakeLists.txt"):
+        names.update(re.findall(r"^\s*llmgw_fetch_dependency\((\w+)\)", cmake.read_text(), re.M))
+    return names
 
 
 def read_cache(build_dir: Path) -> dict[str, str]:
@@ -42,8 +50,12 @@ def main() -> int:
     cache = read_cache(build_dir)
     count = 0
     parts = ["llmgw 包含以下第三方软件。/ llmgw includes the following third-party software.\n"]
+    shipped = shipped_dependencies()
+    if unknown := shipped - deps.keys():
+        print(f"src/ 中使用了依赖清单中没有的依赖：{sorted(unknown)}", file=sys.stderr)
+        return 1
     for name, info in sorted(deps.items()):
-        if info["used_by"] in NOT_SHIPPED:
+        if name not in shipped:
             continue
         src = source_dir(cache, name)
         if not src.is_dir():
