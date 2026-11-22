@@ -43,6 +43,12 @@ std::optional<FieldPath> read_rewrite_path(std::string_view text, const std::str
                                            Diagnostics* diag) {
   auto p = read_path(text, path, diag);
   if (!p) return std::nullopt;
+  // provider 的改写器按规则的路径递归：限制段数，递归深度就有上界
+  constexpr std::size_t kMaxSegments = 32;
+  if (p->size() > kMaxSegments) {
+    diag->error(path, "字段路径 \"" + std::string(text) + "\" 超过 32 段");
+    return std::nullopt;
+  }
   if (p->back().each) {
     diag->error(path,
                 "字段路径 \"" + std::string(text) + "\" 的最后一段不能带 []：要改写的是一个字段");

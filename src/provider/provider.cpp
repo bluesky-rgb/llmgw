@@ -70,11 +70,11 @@ std::unique_ptr<stream::ErrorMapping> convert(const std::optional<config::ErrorM
 
 Result<Prepared> prepare(const RequestInfo& request, const config::Provider& provider,
                          const config::TargetConfig& target) {
-  detail::Rules rules{.model = target.model,
-                      .include_usage = request.stream,
-                      .drops = target.drop_fields,
-                      .renames = target.rename_fields,
-                      .sets = target.set_fields};
+  const detail::Rules rules{.model = target.model,
+                            .include_usage = request.stream,
+                            .drops = target.drop_fields,
+                            .renames = target.rename_fields,
+                            .sets = target.set_fields};
   auto rewritten = detail::rewrite(request.body, rules);
   if (!rewritten) return fail(rewritten.error());
   Prepared p;
@@ -125,10 +125,9 @@ Task<Expected<std::unique_ptr<ResponseStream>, upstream::AttemptError>> attempt(
         options);
     if (!opened) {
       // 预读（检查业务错误码）时出错：请求已经发出，可能已经计费
-      if (*last_error) {
-        upstream::AttemptError e = std::move(**last_error);
-        e.maybe_sent = true;
-        co_return unexpected(std::move(e));
+      if (std::optional<upstream::AttemptError> e = std::move(*last_error); e.has_value()) {
+        e->maybe_sent = true;
+        co_return unexpected(std::move(*e));
       }
       co_return unexpected(
           upstream::AttemptError{.stage = upstream::Stage::kBody,

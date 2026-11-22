@@ -149,6 +149,29 @@ struct Item {
   std::string_view value;    ///< 原文中的值
 };
 
+// 逐项写出 {"k":v,...}
+struct ObjectWriter {
+  std::string* out;
+  bool first = true;
+  void key(std::string_view json_key) {
+    if (!first) out->push_back(',');
+    first = false;
+    out->append(json_key);
+    out->push_back(':');
+  }
+};
+
+// 改名的目标名已经存在：原来的那一项被删除（改名的结果覆盖它）
+std::set<std::string, std::less<>> rename_targets(const std::vector<Item>& items,
+                                                  const Node& node) {
+  std::set<std::string, std::less<>> targets;
+  for (const auto& it : items) {
+    const FieldOps* ops = node.find(it.key);
+    if (ops != nullptr && !ops->drop && ops->rename_to) targets.insert(*ops->rename_to);
+  }
+  return targets;
+}
+
 class Rewriter {
  public:
   /// [begin, end) 是原文，后面至少还有 SIMDJSON_PADDING 个可读的字节
@@ -159,12 +182,16 @@ class Rewriter {
   bool value(std::string_view raw, const FieldOps* ops, std::string* out);
 
  private:
+  bool collect(std::string_view raw, std::string* holder, std::vector<Item>* items);
+  bool create_missing(const Node& node, const std::set<std::string, std::less<>>& present,
+                      ObjectWriter* w);
+
   // simdjson 要求输入后面有 SIMDJSON_PADDING 个可读的字节。原文中的片段后面是原文的其余部分和填充，
   // 直接使用；不在原文中的（设置的值、创建的 "{}"）复制到 holder（调用者保证 holder
   // 在使用期间有效）
   simdjson::padded_string_view view(std::string_view raw, std::string* holder) const {
     // std::less：比较不同分配的指针也有定义（独立审查 1.6 #10）
-    const std::less<const char*> before;
+    const std::less<> before;
     if (!before(raw.data(), begin_) && !before(end_, raw.data() + raw.size())) {
       return simdjson::padded_string_view(
           raw.data(), raw.size(),
@@ -180,72 +207,68 @@ class Rewriter {
   const char* end_;
 };
 
+// 收集对象的每一项在原文中的位置。不是对象、对象之后还有内容时返回 false
+bool Rewriter::collect(std::string_view raw, std::string* holder, std::vector<Item>* items) {
+  od::document doc;
+  if (parser_.iterate(view(raw, holder)).get(doc) != simdjson::SUCCESS) return false;
+  od::object obj;
+  if (doc.get_object().get(obj) != simdjson::SUCCESS) return false;
+  for (auto field : obj) {
+    std::string_view raw_key;
+    if (field.escaped_key().get(raw_key) != simdjson::SUCCESS) return false;
+    std::string_view key;
+    if (field.unescaped_key().get(key) != simdjson::SUCCESS) return false;
+    std::string k(key);  // unescaped_key 指向解析器内部的缓冲区，下一次解析时失效
+    od::value v;
+    if (field.value().get(v) != simdjson::SUCCESS) return false;
+    std::string_view rv;
+    if (v.raw_json().get(rv) != simdjson::SUCCESS) return false;
+    items->push_back({std::move(k), raw_key, trim(rv)});
+  }
+  return doc.at_end();  // 对象之后还有内容：不合法
+}
+
+// 递归的深度由规则树决定（配置的路径最多 32 段），与客户端请求体的嵌套深度无关
+// NOLINTNEXTLINE(misc-no-recursion)
 bool Rewriter::object(std::string_view raw, const Node& node, std::string* out) {
   std::string holder;  // 整个函数期间有效：items 中的位置可能指向它
   std::vector<Item> items;
-  {
-    od::document doc;
-    if (parser_.iterate(view(raw, &holder)).get(doc) != simdjson::SUCCESS) return false;
-    od::object obj;
-    if (doc.get_object().get(obj) != simdjson::SUCCESS) return false;
-    for (auto field : obj) {
-      std::string_view raw_key;
-      if (field.escaped_key().get(raw_key) != simdjson::SUCCESS) return false;
-      std::string_view key;
-      if (field.unescaped_key().get(key) != simdjson::SUCCESS) return false;
-      std::string k(key);  // unescaped_key 指向解析器内部的缓冲区，下一次解析时失效
-      od::value v;
-      if (field.value().get(v) != simdjson::SUCCESS) return false;
-      std::string_view rv;
-      if (v.raw_json().get(rv) != simdjson::SUCCESS) return false;
-      items.push_back({std::move(k), raw_key, trim(rv)});
-    }
-    if (!doc.at_end()) return false;  // 对象之后还有内容
-  }
-  // 改名的目标名已经存在：原来的那一项被删除（改名的结果覆盖它）
-  std::set<std::string, std::less<>> rename_targets;
-  for (const auto& it : items) {
-    const FieldOps* ops = node.find(it.key);
-    if (ops != nullptr && !ops->drop && ops->rename_to) rename_targets.insert(*ops->rename_to);
-  }
+  if (!collect(raw, &holder, &items)) return false;
+  const auto targets = rename_targets(items, node);
   std::set<std::string, std::less<>> present;  // 只在这一层需要创建字段时记录（避免每条消息都分配）
   out->push_back('{');
-  bool first = true;
-  auto emit_key = [&](std::string_view json_key) {
-    if (!first) out->push_back(',');
-    first = false;
-    out->append(json_key);
-    out->push_back(':');
-  };
+  ObjectWriter w{out};
   for (const auto& it : items) {
     const FieldOps* ops = node.find(it.key);
     if (ops != nullptr && ops->drop) continue;
     const bool renamed = ops != nullptr && ops->rename_to.has_value();
-    if (!renamed && rename_targets.contains(it.key)) continue;
+    if (!renamed && targets.contains(it.key)) continue;
     const std::string& name = renamed ? *ops->rename_to : it.key;
-    if (renamed) {
-      emit_key(json_string(name));
-    } else {
-      emit_key(std::string("\"").append(it.raw_key).append("\""));
-    }
+    w.key(renamed ? json_string(name) : std::string("\"").append(it.raw_key).append("\""));
     if (node.creates) present.insert(name);
-    if (!value(it.value, node.find(name), out)) return false;  // 向下深入、设置：按改名之后的名字
+    if (!value(it.value, node.find(name), out)) return false;
   }
-  if (node.creates) {
-    // 创建不存在的字段：设置的值，或者通向设置的中间对象
-    for (const auto& [name, ops] : node.fields) {
-      if (present.contains(name)) continue;
-      if (!ops.set_json && !(ops.into_object && ops.into_object->creates)) continue;
-      emit_key(json_string(name));
-      if (!value(ops.set_json ? std::string_view(*ops.set_json) : std::string_view("{}"), &ops,
-                 out))
-        return false;
-    }
-  }
+  if (node.creates && !create_missing(node, present, &w)) return false;
   out->push_back('}');
   return true;
 }
 
+// 创建不存在的字段：设置的值，或者通向设置的中间对象
+// NOLINTNEXTLINE(misc-no-recursion)
+bool Rewriter::create_missing(const Node& node, const std::set<std::string, std::less<>>& present,
+                              ObjectWriter* w) {
+  for (const auto& [name, ops] : node.fields) {
+    if (present.contains(name)) continue;
+    if (!ops.set_json && !(ops.into_object && ops.into_object->creates)) continue;
+    w->key(json_string(name));
+    const std::string_view v =
+        ops.set_json ? std::string_view(*ops.set_json) : std::string_view("{}");
+    if (!value(v, &ops, w->out)) return false;
+  }
+  return true;
+}
+
+// NOLINTNEXTLINE(misc-no-recursion)
 bool Rewriter::array(std::string_view raw, const Node& node, std::string* out) {
   std::string holder;
   std::vector<std::pair<bool, std::string_view>> elements;  // 是否对象、原文
@@ -279,6 +302,7 @@ bool Rewriter::array(std::string_view raw, const Node& node, std::string* out) {
   return true;
 }
 
+// NOLINTNEXTLINE(misc-no-recursion)
 bool Rewriter::value(std::string_view raw, const FieldOps* ops, std::string* out) {
   if (ops == nullptr) {
     out->append(raw);  // 没有被改写路径经过：逐字节保留
@@ -304,7 +328,7 @@ std::string json_string(std::string_view s) {
       out += '\\';
       out += c;
     } else if (u < 0x20) {
-      static constexpr char kHex[] = "0123456789abcdef";
+      constexpr std::string_view kHex = "0123456789abcdef";
       out += "\\u00";
       out += kHex[u >> 4U];
       out += kHex[u & 0xFU];

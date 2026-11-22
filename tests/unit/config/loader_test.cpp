@@ -588,6 +588,18 @@ TEST(Rewrites, rules_under_renamed_or_set_fields_are_rejected) {
   EXPECT_TRUE(ok.ok()) << dump(ok);
 }
 
+// 改写器的递归深度由规则的路径决定：限制路径的段数
+TEST(Rewrites, path_depth_is_limited) {
+  std::string deep = "a";
+  for (int i = 0; i < 32; ++i) deep += ".a";
+  expect_error(minimal("", "", R"(, "drop_fields": [")" + deep + R"("])"),
+               "models[0].targets[0].drop_fields[0]", "32");
+  std::string ok = "a";
+  for (int i = 1; i < 32; ++i) ok += ".a";
+  auto r = parse(minimal("", "", R"(, "drop_fields": [")" + ok + R"("])"), skip_env());
+  EXPECT_TRUE(r.ok()) << dump(r);
+}
+
 TEST(Rewrites, last_segment_cannot_be_each) {
   expect_error(minimal("", "", R"(, "drop_fields": ["messages[]"])"),
                "models[0].targets[0].drop_fields[0]");
