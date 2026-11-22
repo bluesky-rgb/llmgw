@@ -18,12 +18,13 @@ add_executable(llmgw_unit_tests
   unit/stream/sse_parser_test.cpp
   unit/stream/inspect_test.cpp
   unit/stream/stream_test.cpp
-  unit/stream/review_test.cpp)
+  unit/stream/review_test.cpp
+  unit/provider/rewrite_test.cpp)
 target_link_libraries(llmgw_unit_tests PRIVATE GTest::gtest_main llmgw::core llmgw::config llmgw::server
-                      llmgw::stream)
+                      llmgw::stream llmgw::provider)
 # 单元测试可以测试模块内部的组件（比如 config 的 json_reader.h），所以能看到 src/<模块>/ 下的私有头文件
 target_include_directories(llmgw_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/config" "${CMAKE_SOURCE_DIR}/src/server"
-                           "${CMAKE_SOURCE_DIR}/src/stream")
+                           "${CMAKE_SOURCE_DIR}/src/stream" "${CMAKE_SOURCE_DIR}/src/provider")
 llmgw_fetch_dependency(nlohmann_json)
 target_include_directories(llmgw_unit_tests SYSTEM PRIVATE "${nlohmann_json_SOURCE_DIR}/single_include")
 target_compile_definitions(llmgw_unit_tests PRIVATE LLMGW_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -85,11 +86,14 @@ add_executable(llmgw_upstream_tests
   integration/upstream/failure_test.cpp
   integration/upstream/stress_test.cpp
   integration/upstream/perf_test.cpp
-  integration/upstream/review_test.cpp)
+  integration/upstream/review_test.cpp
+  integration/provider/attempt_test.cpp)
 # 审查用例（review_test.cpp）直接测试内部组件（连接池、报文、TLS 身份设置）
 target_include_directories(llmgw_upstream_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/upstream")
-target_link_libraries(llmgw_upstream_tests PRIVATE GTest::gtest_main llmgw::upstream Boost::beast
+target_link_libraries(llmgw_upstream_tests PRIVATE GTest::gtest_main llmgw::upstream llmgw::provider llmgw::config Boost::beast
                       OpenSSL::SSL OpenSSL::Crypto)
+# provider 的串联测试（任务 1.6 P6）复用这里的测试上游
+target_include_directories(llmgw_upstream_tests SYSTEM PRIVATE "${nlohmann_json_SOURCE_DIR}/single_include")
 # GCC 对省略了字段的指定初始化器（{.tls = ...}）也报 missing-field-initializers；测试中大量使用这种写法。
 # mismatched-new-delete：GCC 开优化时对 Asio 协程帧（自带 operator new/delete）组合 && 的误报
 target_compile_options(llmgw_upstream_tests PRIVATE

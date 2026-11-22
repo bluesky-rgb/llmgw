@@ -35,6 +35,27 @@ std::optional<FieldPath> read_path(std::string_view text, const std::string& pat
   return *p;
 }
 
+// drop_fields / rename_fields / set_fields 的路径（任务 1.6 补充的校验）：
+// 最后一段不能带 []（删除、改名、设置的对象是一个字段，而不是数组中的每个元素本身）；
+// 顶层的 model 和 stream 由网关管理（model 由路由决定，stream 决定了响应的解析方式），不能改写，
+// 也不能改写它们下面的路径（model.x 会把 model 替换成对象）
+std::optional<FieldPath> read_rewrite_path(std::string_view text, const std::string& path,
+                                           Diagnostics* diag) {
+  auto p = read_path(text, path, diag);
+  if (!p) return std::nullopt;
+  if (p->back().each) {
+    diag->error(path,
+                "字段路径 \"" + std::string(text) + "\" 的最后一段不能带 []：要改写的是一个字段");
+    return std::nullopt;
+  }
+  if (p->front().name == "model" || p->front().name == "stream") {
+    diag->error(path, "\"" + p->front().name +
+                          "\" 由网关管理，不能改写（model 由路由决定，stream 决定响应的解析方式）");
+    return std::nullopt;
+  }
+  return p;
+}
+
 std::optional<Url> read_url(ObjectReader& r, std::string_view key, bool required) {
   auto text = r.string(key, required);
   if (!text) return std::nullopt;
@@ -183,7 +204,13 @@ namespace {
 ErrorMapping read_error_mapping(ObjectReader m) {
   ErrorMapping em;
   if (auto f = m.string("field", true)) {
-    if (auto fp = read_path(*f, m.path_of("field"), m.diag())) em.field = *fp;
+    if (auto fp = read_path(*f, m.path_of("field"), m.diag())) {
+      if (std::any_of(fp->begin(), fp->end(), [](const PathSegment& s) { return s.each; })) {
+        m.diag()->error(m.path_of("field"), "错误码的路径不能带 []：它指向响应体中的一个值");
+      } else {
+        em.field = *fp;
+      }
+    }
   }
   if (m.raw("codes") == nullptr)
     m.string("codes", true);  // 登记为缺少的必填字段，在 finish() 中报告
@@ -371,10 +398,53 @@ UpstreamConfig read_upstream(ObjectReader r) {
   return u;
 }
 
-TargetConfig read_target(ObjectReader r, const Timeouts& global) {
-  TargetConfig t;
-  if (auto v = r.string("provider", true)) t.provider = *v;
-  if (auto v = r.string("model", true)) t.model = *v;
+// 一条改写规则的路径，以及它在配置中的位置（报错用）
+struct RuleAt {
+  FieldPath path;
+  std::string where;
+};
+
+bool strictly_under(const FieldPath& p, const FieldPath& prefix) {
+  return p.size() > prefix.size() && std::equal(prefix.begin(), prefix.end(), p.begin());
+}
+
+// 规则之间的冲突（独立审查 1.6 #2、#4）：
+// - 路径经过被改名的字段（来源或目标）、被设置的字段：按原名还是新名匹配、作用于原值还是设置的值，
+//   都有歧义，要求写成一条规则
+// - 两条改名指向同一个目标：输出重复的键；改名链：结果取决于执行顺序
+void check_rule_conflicts(const TargetConfig& t, const std::vector<RuleAt>& rules,
+                          const std::vector<RuleAt>& anchors, ObjectReader& r) {
+  for (const auto& rule : rules) {
+    for (const auto& a : anchors) {
+      if (!strictly_under(rule.path, a.path)) continue;
+      r.diag()->error(rule.where, "\"" + to_string(rule.path) +
+                                      "\" 经过了被改名或者被设置的字段 \"" + to_string(a.path) +
+                                      "\"，含义有歧义；请合并成一条规则（比如直接设置整个对象）");
+      break;
+    }
+  }
+  for (std::size_t i = 0; i < t.rename_fields.size(); ++i) {
+    for (std::size_t j = 0; j < t.rename_fields.size(); ++j) {
+      const auto& a = t.rename_fields[i];
+      const auto& b = t.rename_fields[j];
+      if (a.to == b.from) {
+        r.diag()->error(
+            r.path_of("rename_fields"),
+            "\"" + to_string(b.from) +
+                "\" 既是改名的目标又是改名的来源，结果取决于执行顺序；请合并成一次改名");
+      }
+      if (i < j && a.to == b.to) {
+        r.diag()->error(r.path_of("rename_fields"), "\"" + to_string(a.from) + "\" 和 \"" +
+                                                        to_string(b.from) + "\" 都改名为 \"" +
+                                                        to_string(a.to) + "\"，结果会有重复的键");
+      }
+    }
+  }
+}
+
+void read_rewrites(ObjectReader& r, TargetConfig* t) {
+  std::vector<RuleAt> rules;  // 每条规则的路径（改名：来源，目标与它在同一个对象中）
+  std::vector<RuleAt> anchors;  // 不能再往下写规则的字段：改名的来源和目标、设置的字段
   if (const Json* arr = r.array("drop_fields")) {
     for (std::size_t i = 0; i < arr->size(); ++i) {
       const auto path = index_path(r.path_of("drop_fields"), i);
@@ -382,35 +452,50 @@ TargetConfig read_target(ObjectReader r, const Timeouts& global) {
         r.diag()->error(path, "应该是字段路径字符串，比如 \"messages[].reasoning_content\"");
         continue;
       }
-      if (auto fp = read_path((*arr)[i].get<std::string>(), path, r.diag()))
-        t.drop_fields.push_back(*fp);
-    }
-  }
-  for_each_entry(r, "rename_fields",
-                 [&](const std::string& from, const Json& v, const std::string& path) {
-                   auto f = read_path(from, path, r.diag());
-                   if (!v.is_string()) {
-                     r.diag()->error(path, "应该是新的字段名（字符串），实际是" + type_name(v));
-                     return;
-                   }
-                   auto to = read_path(v.get<std::string>(), path, r.diag());
-                   if (f && to) t.rename_fields.push_back({.from = *f, .to = *to});
-                 });
-  for (const auto& a : t.rename_fields) {
-    for (const auto& b : t.rename_fields) {
-      if (a.to == b.from) {
-        r.diag()->error(
-            r.path_of("rename_fields"),
-            "\"" + to_string(b.from) +
-                "\" 既是改名的目标又是改名的来源，结果取决于执行顺序；请合并成一次改名");
+      if (auto fp = read_rewrite_path((*arr)[i].get<std::string>(), path, r.diag())) {
+        t->drop_fields.push_back(*fp);
+        rules.push_back({*fp, path});
       }
     }
   }
+  for_each_entry(
+      r, "rename_fields", [&](const std::string& from, const Json& v, const std::string& path) {
+        auto f = read_rewrite_path(from, path, r.diag());
+        if (!v.is_string()) {
+          r.diag()->error(path, "应该是新的字段名（字符串），实际是" + type_name(v));
+          return;
+        }
+        auto to = read_rewrite_path(v.get<std::string>(), path, r.diag());
+        if (!f || !to) return;
+        // 改名只在同一个父对象中进行：跨层的“改名”其实是移动，含义不清楚
+        const bool same_parent =
+            f->size() == to->size() && std::equal(f->begin(), f->end() - 1, to->begin());
+        if (!same_parent) {
+          r.diag()->error(path,
+                          "改名的来源和目标必须在同一个对象中（比如 messages[].a → messages[].b）");
+          return;
+        }
+        t->rename_fields.push_back({.from = *f, .to = *to});
+        rules.push_back({*f, path});
+        anchors.push_back({*f, path});
+        anchors.push_back({*to, path});
+      });
   for_each_entry(r, "set_fields",
                  [&](const std::string& key, const Json& v, const std::string& path) {
-                   if (auto fp = read_path(key, path, r.diag()))
-                     t.set_fields.push_back({.path = *fp, .json_value = v.dump()});
+                   if (auto fp = read_rewrite_path(key, path, r.diag())) {
+                     t->set_fields.push_back({.path = *fp, .json_value = v.dump()});
+                     rules.push_back({*fp, path});
+                     anchors.push_back({*fp, path});
+                   }
                  });
+  check_rule_conflicts(*t, rules, anchors, r);
+}
+
+TargetConfig read_target(ObjectReader r, const Timeouts& global) {
+  TargetConfig t;
+  if (auto v = r.string("provider", true)) t.provider = *v;
+  if (auto v = r.string("model", true)) t.model = *v;
+  read_rewrites(r, &t);
   TimeoutOverrides o{};
   if (auto ov = r.object("timeouts")) o = read_overrides(*ov);
   t.timeouts = merge(global, o);
