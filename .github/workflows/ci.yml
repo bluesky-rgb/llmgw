@@ -31,7 +31,7 @@ jobs:
             type: Debug
             flags: "-fsanitize=thread"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev
       - name: Cache third-party sources
@@ -55,7 +55,7 @@ jobs:
     name: architecture
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev clang-format-18 clang-tidy-18
       # 每一项检查都会执行并报告，便于一次看到所有问题
@@ -105,7 +105,7 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y ninja-build clang-18 libclang-rt-18-dev libssl-dev
       - name: Cache third-party sources
@@ -145,7 +145,7 @@ jobs:
     name: docker
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Build image
         run: docker build -t llmgw:ci .
       - name: Refuses to start without authentication
@@ -173,7 +173,7 @@ jobs:
     name: dco
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Check Signed-off-by
@@ -186,6 +186,6 @@ jobs:
     name: security
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Check third-party dependencies against OSV
         run: python3 tools/check_vulns.py
