@@ -49,7 +49,7 @@
 | | `llmgw_event_loop_lag_seconds`（直方图） | `worker` |
 | | `llmgw_process_resident_memory_bytes` | — |
 | **保护机制** | `llmgw_breaker_state` | `provider` |
-| | `llmgw_rejected_total` | `reason`（overload / rate_limit / budget / memory / too_large / headers_too_large / bad_request / slow_request） |
+| | `llmgw_rejected_total` | `reason`（overload / auth / auth_throttled / rate_limit / budget / memory / too_large / headers_too_large / bad_request / slow_request） |
 | | `llmgw_retry_budget_exhausted_total` | — |
 | | `llmgw_bulkhead_rejected_total` | `provider` |
 | | `llmgw_degraded` | `feature` |

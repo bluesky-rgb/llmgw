@@ -69,10 +69,10 @@ def fail(msg: str, proc=None) -> None:
     sys.exit(1)
 
 
-def request(port: int, method: str, path: str, body=None):
+def request(port: int, method: str, path: str, body=None, headers=None):
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     conn.request(method, path, body=json.dumps(body) if body is not None else None,
-                 headers={"Content-Type": "application/json"})
+                 headers={"Content-Type": "application/json", **(headers or {})})
     r = conn.getresponse()
     data = r.read()
     conn.close()
@@ -174,6 +174,46 @@ def main() -> None:
         if proc.returncode != 0:
             fail(f"退出码 {proc.returncode}")
         config["server"]["host"] = "127.0.0.1"
+
+        # 任务 2.2：keygen 生成 key 和哈希；启用 auth 之后监听 0.0.0.0 不需要 --allow-unauthenticated；
+        # 没有 key 是 401、有 key 是 200；key 不出现在任何输出中
+        kg = subprocess.run([exe, "keygen", "--id", "smoke"], capture_output=True, text=True, timeout=10)
+        gateway_key = kg.stdout.strip()
+        hm = re.search(r'"hash": "(sha256:[0-9a-f]{64})"', kg.stderr)
+        if kg.returncode != 0 or not gateway_key.startswith("sk-gw-") or not hm or gateway_key in kg.stderr:
+            fail(f"keygen 的输出不对：{kg.returncode} {kg.stdout!r} {kg.stderr!r}")
+        auth_config = json.loads(json.dumps(config))
+        auth_config["server"]["host"] = "0.0.0.0"
+        auth_config["server"]["port"] = free_port()
+        auth_config["pipeline"] = ["auth"]
+        auth_config["keys"] = [{"id": "smoke", "hash": hm.group(1)}]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(auth_config, f)
+        proc = subprocess.Popen([exe, "serve", "-c", path], env=env, stderr=subprocess.PIPE, text=True)
+        line = proc.stderr.readline()
+        m = re.search(r"数据面 [^:]+:(\d+)", line)
+        if not m:
+            fail("启用 auth 后监听 0.0.0.0 应该直接启动：" + line, proc)
+        auth_port = int(m.group(1))
+        chat = {"model": "smart", "messages": []}
+        status, headers, _ = request(auth_port, "POST", "/v1/chat/completions", chat)
+        if status != 401 or headers.get("WWW-Authenticate") != "Bearer":
+            fail(f"没有 key 应该是 401：{status} {headers}", proc)
+        status, _, _ = request(auth_port, "POST", "/v1/chat/completions", chat,
+                               {"Authorization": "Bearer sk-gw-wrong"})
+        if status != 401:
+            fail(f"错的 key 应该是 401：{status}", proc)
+        status, _, body = request(auth_port, "POST", "/v1/chat/completions", chat,
+                                  {"Authorization": "Bearer " + gateway_key})
+        if status != 200:
+            fail(f"有效的 key 应该是 200：{status} {body!r}", proc)
+        if seen[-1]["auth"] != "Bearer " + SECRET:
+            fail("上游收到的不是网关配置的上游 key", proc)
+        proc.send_signal(signal.SIGTERM)
+        _, err = proc.communicate(timeout=5)
+        if gateway_key in line + err or SECRET in line + err:
+            fail("输出中出现了 key")
+        print("通过：auth（401 / 200，监听 0.0.0.0 不需要 --allow-unauthenticated）")
 
         # 配置错误：退出码 1，不启动
         config["models"][0]["targets"][0]["provider"] = "missing"

@@ -160,5 +160,17 @@ TEST(ParseChatFields, cost_on_typical_and_large_bodies) {
   }
 }
 
+// 任务 2.2：Authorization 头中的 Bearer token（RFC 6750 2.1）
+TEST(BearerToken, parses_only_well_formed_bearer_credentials) {
+  EXPECT_EQ(bearer_token("Bearer sk-gw-abc"), "sk-gw-abc");
+  EXPECT_EQ(bearer_token("bearer sk-gw-abc"), "sk-gw-abc") << "scheme 大小写不敏感";
+  EXPECT_EQ(bearer_token("BEARER   sk-gw-abc  "), "sk-gw-abc") << "多个空格、末尾空白";
+  EXPECT_EQ(bearer_token("Bearer sk-gw-abc\t"), "sk-gw-abc");
+  for (const char* bad : {"", "Bearer", "Bearer ", "Bearer    ", "Bearersk-gw-abc", "Basic abc",
+                          "Bear sk", "Bearer a b", "Bearer a\tb", "sk-gw-abc"}) {
+    EXPECT_EQ(bearer_token(bad), "") << "\"" << bad << "\"";
+  }
+}
+
 }  // namespace
 }  // namespace llmgw::server::detail

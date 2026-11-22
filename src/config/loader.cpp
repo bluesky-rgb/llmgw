@@ -255,13 +255,19 @@ LoadReport parse(std::string_view json_text, const LoadOptions& options) {
     read_array(top, "models", &snapshot->models,
                [&](ObjectReader r) { return detail::read_model(std::move(r), global); });
     read_pipeline(top, &snapshot->pipeline);
-    top.unsupported("keys", "将在 v0.3 提供，任务 2.2", "目前网关不做鉴权，请只在可信网络中使用");
+    if (const Json* keys = top.array("keys")) {
+      for (std::size_t i = 0; i < keys->size(); ++i) {
+        ObjectReader r((*keys)[i], index_path("keys", i), &diag);
+        if (r.valid()) snapshot->keys.push_back(detail::read_key(std::move(r)));
+      }
+    }
     top.unsupported("pricing", "将在 v0.3 提供，任务 2.4");
     top.unsupported("accounting", "将在 v0.3 提供，任务 2.4");
     top.finish();
 
     check_unique(snapshot->providers, "providers", "上游", &diag);
     check_unique(snapshot->models, "models", "模型", &diag);
+    detail::check_keys(snapshot->keys, &diag);
     check_references(*snapshot, &diag);
     if (options.resolve_env) resolve_keys(snapshot.get(), getenv, &diag);
   }

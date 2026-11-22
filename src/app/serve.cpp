@@ -49,16 +49,19 @@ std::optional<Args> parse_args(const std::vector<std::string_view>& args) {
   return out;
 }
 
-// 任务 1.9：客户端鉴权在 2.2 之前还没有实现。网关持有上游的 key，监听非本机地址时，任何能访问这个
-// 端口的人都能用这些 key 调用模型、产生费用。默认拒绝启动，需要显式确认。
-// 按实际要绑定的地址判断（解析之后），解析失败也当作“不是本机地址”（独立审查 1.9 #1）
+// 网关持有上游的 key：数据面监听非本机地址而没有客户端鉴权时，任何能访问这个端口的人都能用这些 key
+// 调用模型、产生费用（任务 1.9）。所以没有启用 auth 插件时默认拒绝启动，需要显式确认；启用了 auth
+// （任务 2.2）就可以直接监听。按实际要绑定的地址判断（解析之后），解析失败也当作“不是本机地址”
+// （独立审查 1.9 #1）
 bool allowed_to_listen(const config::Snapshot& snapshot, bool allow_unauthenticated) {
+  if (has_auth(snapshot)) return true;
   if (server::listen_address_is_loopback(snapshot.server.host).value_or(false)) return true;
   if (!allow_unauthenticated) {
     std::fprintf(
         stderr,
-        "拒绝启动：数据面监听 %s（不是本机地址），而网关还不做客户端鉴权（任务 2.2）。\n"
+        "拒绝启动：数据面监听 %s（不是本机地址），而 pipeline 中没有启用客户端鉴权（auth 插件）。\n"
         "任何能访问这个端口的人都能用配置中的上游 key 调用模型。\n"
+        "启用鉴权：在配置中加上 \"pipeline\": [\"auth\"] 和 keys（llmgw keygen 生成）；"
         "只在本机使用：把 server.host 改为 127.0.0.1；确认网络可信（比如容器网络、防火墙后面）："
         "加 --allow-unauthenticated\n",
         snapshot.server.host.c_str());

@@ -82,6 +82,10 @@ class Session {
   // 处理一个请求，返回连接能否继续复用
   Task<bool> handle(Request request);
   Task<bool> handle_chat(Request request, std::string request_id);
+  /// GET /v1/models：经过中间件链（鉴权）之后返回配置中的模型（任务 2.2）
+  Task<bool> handle_models(Request request, std::string request_id);
+  /// 两个接口共用：从请求中取出插件需要的信息（Bearer token、客户端地址）
+  RequestInfo make_info(const Request& request, std::string request_id, Endpoint endpoint) const;
 
   // ---- relay.cpp ----
   struct Exchange;
@@ -91,8 +95,8 @@ class Session {
   // 而是被悄悄吞掉、一直等到别的分支“成功”（独立审查发现）。所以 relay、pump 内部捕获全部异常。
   Task<bool> relay(Exchange* ex);
   /// 请求结束后执行中间件链的 on_complete（不在竞速中，客户端断开不会取消它），限时
-  /// complete_timeout。 返回 false 表示超时了（插件卡住），连接要关闭
-  Task<bool> finish_chain(Exchange* ex);
+  /// complete_timeout。 返回 false 表示超时了（插件卡住），连接要关闭。ctx、run 在调用期间必须有效
+  Task<bool> finish_chain(RequestContext* ctx, middleware::Chain::Run* run);
 
   Task<bool> respond(Exchange* ex, Result<std::unique_ptr<ResponseStream>> dispatched);
   Task<PumpResult> pump(Exchange* ex, ResponseStream* stream);
@@ -127,6 +131,7 @@ class Session {
                           unsigned version = 11);
 
   tcp::socket socket_;
+  std::string peer_;  ///< 对端的 IP 地址（连接建立时取一次）
   beast::flat_buffer buffer_;  ///< 跨请求保留：管线化时可能已经读到了下一个请求的开头
   WorkerContext* worker_;
   ConnectionGuard guard_;

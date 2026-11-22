@@ -1,0 +1,7 @@
+{
+  "server": { "host": "127.0.0.1", "port": 18080 },
+  "providers": [ { "name": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY" } ],
+  "models": [ { "name": "smart", "targets": [ { "provider": "openai", "model": "gpt" } ] } ],
+  "pipeline": [ "auth" ],
+  "keys": [ { "id": "app", "hash": "sk-gw-PLAINTEXT_KEY_MUST_NOT_BE_PRINTED_0123456789abcdefg" } ]
+}

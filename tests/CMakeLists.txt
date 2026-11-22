@@ -16,6 +16,7 @@ add_executable(llmgw_unit_tests
   unit/config/json_reader_test.cpp
   unit/config/loader_test.cpp
   unit/config/pipeline_test.cpp
+  unit/config/keys_test.cpp
   unit/server/http_util_test.cpp
   unit/stream/sse_parser_test.cpp
   unit/stream/inspect_test.cpp
@@ -24,6 +25,7 @@ add_executable(llmgw_unit_tests
   unit/provider/rewrite_test.cpp
   unit/router/router_test.cpp
   unit/middleware/chain_test.cpp
+  unit/middleware/auth_test.cpp
   unit/executor/classify_test.cpp
   unit/stream/provider_samples_test.cpp)
 target_link_libraries(llmgw_unit_tests PRIVATE GTest::gtest_main llmgw::core llmgw::config llmgw::server
@@ -70,10 +72,24 @@ llmgw_cli_test(unknown_argument_exits_2 ARGS "check|--bogus" EXPECT 2 REQUIRE "�
 # pipeline 中的插件名不存在（任务 2.1 M6）：check 和 serve 都拒绝，并说明可用的插件
 set(unknown_plugin ${CMAKE_CURRENT_SOURCE_DIR}/cli/unknown_plugin.json)
 llmgw_cli_test(check_unknown_plugin_exits_1 ARGS "check|-c|${unknown_plugin}|--skip-env" EXPECT 1
-               REQUIRE "unknown_plugin.json：1 个错误.*pipeline\\[0\\]：没有名为 \"auth\" 的插件")
+               REQUIRE "unknown_plugin.json：1 个错误.*pipeline\\[0\\]：没有名为 \"auht\" 的插件（是不是 \"auth\"？）")
 llmgw_cli_test(serve_unknown_plugin_exits_1 ARGS "serve|-c|${unknown_plugin}" EXPECT 1
-               REQUIRE "没有名为 \"auth\" 的插件" ENV "OPENAI_API_KEY=x")
-llmgw_cli_test(plugins_lists_registry ARGS "plugins" EXPECT 0 REQUIRE "插件")
+               REQUIRE "没有名为 \"auht\" 的插件" ENV "OPENAI_API_KEY=x")
+llmgw_cli_test(plugins_lists_registry ARGS "plugins" EXPECT 0 REQUIRE "auth")
+# 任务 2.2：keygen；配置中不能出现明文 key（并且错误信息中不回显它）；auth 与 keys 的交叉检查
+llmgw_cli_test(keygen_prints_key_and_hash ARGS "keygen|--id|app-chatbot" EXPECT 0
+               REQUIRE "sk-gw-[A-Za-z0-9_-]+.*\"id\": \"app-chatbot\", \"hash\": \"sha256:[0-9a-f]+\"")
+llmgw_cli_test(keygen_requires_id ARGS "keygen" EXPECT 2 REQUIRE "--id")
+llmgw_cli_test(keygen_rejects_bad_id ARGS "keygen|--id|has space" EXPECT 2 REQUIRE "只能包含")
+set(cli_dir ${CMAKE_CURRENT_SOURCE_DIR}/cli)
+llmgw_cli_test(check_rejects_plaintext_key ARGS "check|-c|${cli_dir}/plaintext_key.json|--skip-env"
+               EXPECT 1 REQUIRE "keys\\[0\\]\\.hash：这是 key 本身" FORBID "PLAINTEXT_KEY")
+llmgw_cli_test(serve_rejects_plaintext_key ARGS "serve|-c|${cli_dir}/plaintext_key.json" EXPECT 1
+               REQUIRE "这是 key 本身" FORBID "PLAINTEXT_KEY" ENV "OPENAI_API_KEY=x")
+llmgw_cli_test(check_auth_without_keys ARGS "check|-c|${cli_dir}/auth_without_keys.json|--skip-env"
+               EXPECT 1 REQUIRE "启用了 auth 但没有配置 keys")
+llmgw_cli_test(check_keys_without_auth_warns ARGS "check|-c|${cli_dir}/keys_without_auth.json|--skip-env"
+               EXPECT 0 REQUIRE "1 个警告.*不会校验 key")
 # 密钥不能出现在 check 的任何输出中（配置有错误时也一样）
 llmgw_cli_test(check_never_prints_api_key ARGS "check|-c|${bad}" EXPECT 1 REQUIRE "bad.json"
                FORBID "sk-VERY-SECRET" ENV "OPENAI_API_KEY=sk-VERY-SECRET-1;MINIMAX_API_KEY=sk-VERY-SECRET-2")
@@ -127,7 +143,8 @@ add_executable(llmgw_upstream_tests
   integration/provider/attempt_test.cpp
   integration/executor/executor_test.cpp
   integration/app/gateway_test.cpp
-  integration/app/prototype_parity_test.cpp)
+  integration/app/prototype_parity_test.cpp
+  integration/app/auth_test.cpp)
 # 审查用例（review_test.cpp）直接测试内部组件（连接池、报文、TLS 身份设置）
 target_include_directories(llmgw_upstream_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/upstream")
 target_link_libraries(llmgw_upstream_tests PRIVATE GTest::gtest_main llmgw::upstream llmgw::provider llmgw::executor llmgw::config llmgw_app_lib Boost::beast

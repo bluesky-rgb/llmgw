@@ -20,11 +20,13 @@ void print_usage() {
   std::fputs(
       "用法：\n"
       "  llmgw serve [-c 配置文件] [--allow-unauthenticated]\n"
-      "                                           启动网关（Ctrl-C 或 SIGTERM "
-      "停止）。还没有客户端鉴权：\n"
-      "                                           监听非本机地址时需要 --allow-unauthenticated\n"
+      "                                           启动网关（Ctrl-C 或 SIGTERM 停止）。没有启用 "
+      "auth\n"
+      "                                           插件时，监听非本机地址需要 "
+      "--allow-unauthenticated\n"
       "  llmgw check [-c 配置文件] [--skip-env]   校验配置文件\n"
       "  llmgw plugins                           列出可以在 pipeline 中启用的中间件插件\n"
+      "  llmgw keygen --id <名字>                 生成一个网关 key 和要写进配置的哈希\n"
       "  llmgw version                           显示版本\n"
       "\n"
       "check 的退出码：0 配置有效（可能有警告），1 配置有错误，2 参数错误或文件读不了\n"
@@ -77,6 +79,7 @@ int main(int argc, char** argv) {
   }
   if (args[0] == "check") return check({args.begin() + 1, args.end()});
   if (args[0] == "serve") return llmgw::app::serve({args.begin() + 1, args.end()});
+  if (args[0] == "keygen") return llmgw::app::keygen({args.begin() + 1, args.end()});
   if (args[0] == "plugins" && args.size() == 1) {
     return llmgw::app::list_plugins(*llmgw::app::builtin_registry());
   }

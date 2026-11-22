@@ -164,6 +164,20 @@ bool is_hop_by_hop(std::string_view name) {
                      [&](std::string_view h) { return iequals(h, name); });
 }
 
+std::string bearer_token(std::string_view authorization) {
+  constexpr std::string_view kScheme = "bearer";
+  if (authorization.size() <= kScheme.size() ||
+      !iequals(authorization.substr(0, kScheme.size()), kScheme)) {
+    return {};
+  }
+  std::string_view rest = authorization.substr(kScheme.size());
+  if (rest.front() != ' ') return {};  // "Bearerxyz" 不是 Bearer
+  while (!rest.empty() && rest.front() == ' ') rest.remove_prefix(1);
+  while (!rest.empty() && (rest.back() == ' ' || rest.back() == '\t')) rest.remove_suffix(1);
+  if (rest.empty() || rest.find_first_of(" \t") != std::string_view::npos) return {};
+  return std::string(rest);
+}
+
 bool plugin_header_allowed(std::string_view name, std::string_view value) {
   static constexpr std::array<std::string_view, 6> kGatewayOwned{
       "content-type", "x-request-id", "x-should-retry", "retry-after", "retry-after-ms", "allow"};

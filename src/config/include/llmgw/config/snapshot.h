@@ -158,6 +158,14 @@ struct ModelConfig {
   std::vector<TargetConfig> targets;  ///< 按顺序切换，不为空
 };
 
+/// 一个网关 key（客户端用来访问网关的 key，任务 2.2）。配置中只有它的哈希，没有 key 本身。
+struct KeyConfig {
+  std::string id;    ///< 标识：日志、指标、用量中只出现它
+  std::string hash;  ///< "sha256:" + 64 位小写十六进制（加载时已经转成小写）
+
+  friend bool operator==(const KeyConfig&, const KeyConfig&) = default;
+};
+
 /// 中间件链中的一项（任务 2.1）。插件名是否存在、插件自己的配置是否正确，由 middleware 模块校验
 /// （config 不依赖 middleware，不知道有哪些插件）。
 struct PipelineEntry {
@@ -180,6 +188,8 @@ struct Snapshot {
   std::vector<ModelConfig> models;
   /// 中间件链，按执行顺序（on_complete 按相反的顺序）。为空表示不启用任何中间件
   std::vector<PipelineEntry> pipeline;
+  /// 网关 key。只有 pipeline 中启用了 auth 插件时才会校验
+  std::vector<KeyConfig> keys;
 
   /// 按名字查找；找不到返回 nullptr。返回的指针与快照的生命周期相同。
   [[nodiscard]] const Provider* find_provider(std::string_view name) const;
