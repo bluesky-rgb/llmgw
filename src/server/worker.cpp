@@ -21,10 +21,12 @@ void report(const std::exception_ptr& e, const char* where) {
 
 }  // namespace
 
-Worker::Worker(unsigned index, std::shared_ptr<const config::Snapshot> config, SharedState* shared,
+Worker::Worker(unsigned index, unsigned worker_count,
+               std::shared_ptr<const config::Snapshot> config, SharedState* shared,
                const DispatcherFactory& dispatcher_factory, const MetricsFactory& metrics_factory)
     : ioc_(std::make_unique<asio::io_context>(1)) {
-  const WorkerInfo info{.index = index, .executor = ioc_->get_executor()};
+  const WorkerInfo info{
+      .index = index, .worker_count = worker_count, .executor = ioc_->get_executor()};
   dispatcher_ = dispatcher_factory(info);
   metrics_ = metrics_factory ? metrics_factory(info) : nullptr;
   if (!metrics_) metrics_ = std::make_unique<NullMetricsRecorder>();
@@ -43,7 +45,8 @@ Worker::~Worker() {
     std::fprintf(stderr, "[server] worker %u: stop failed: %s\n", context_.index, e.what());
   }
   acceptor_.reset();
-  ioc_.reset();  // 先于 dispatcher_ 销毁，见头文件中的说明
+  dispatcher_.reset();  // 先于 io_context 销毁，见头文件中的说明
+  ioc_.reset();
 }
 
 Result<void> Worker::listen(const tcp::endpoint& endpoint) {

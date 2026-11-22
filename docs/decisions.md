@@ -135,3 +135,23 @@ CI 的 clang-tidy 使用 Clang 18（Ubuntu 24.04 默认），所以即使升级�
 - 多一个依赖 tl::expected，纳入漏洞检查（`tools/check_vulns.py`）
 
 **迁移条件**：最低工具链支持 `std::expected` 时（比如 Clang ≥ 19，或换用 libc++），只修改 `result.h` 中的别名；调用代码不需要改动。
+
+**补充（2026-11-22，任务 1.7）**：`task.h` 中还有一个辅助函数 `is_cancelled()`（`this_coro::cancellation_state`），用于“被取消之后、产生副作用之前先检查”的约定。仍然只在 `task.h` 中引用 Asio，原来在 server 中，executor 也需要，移到这里共用。
+
+---
+
+## ADR-008：executor 直接依赖 upstream
+
+**日期**：2026-11-22（任务 1.7）
+
+**背景**：`module_deps.json` 原来规定 executor 只依赖 provider，不依赖 upstream。实现时发现 executor 的核心决策（design.md 6.1：能不能换下一个目标）完全取决于 `upstream::AttemptError` 的字段（阶段、`maybe_sent`、`timed_out`），并且要把每个 Worker 的 `upstream::Client` 传给 `provider::attempt()`。
+
+**选择**：允许 executor 依赖 upstream（层次不变：upstream 在 executor 下面两层，没有环）。
+
+| 备选 | 为什么不选 |
+|---|---|
+| 只经由 provider 的头文件间接使用这些类型 | 依赖还在，只是藏起来了，`check_deps` 看不到；provider 的头文件一改，executor 莫名其妙地编译失败 |
+| provider 把 `AttemptError` 转换成自己的类型 | 多一层一模一样的结构和转换代码；字段增加时两处都要改 |
+| 把 `upstream::Client` 藏在 provider 里面 | Client 是每个 Worker 一份的资源（连接池），应该由组装者（app）创建、注入，provider 是无状态的 |
+
+**代价**：executor 的测试可以（也需要）直接使用 upstream 的测试上游，这其实是好处：“有没有重试”的唯一可信证据是第二个上游有没有收到请求。

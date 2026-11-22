@@ -592,6 +592,13 @@ llmgw/
 | 其他 4xx | 不会，但重试也没用 | ↩️ 原样返回 |
 | 流式输出开始以后中断 | 已经计费 | ❌ 不切换，在流末尾追加 `error` 事件（见 ADR-003） |
 
+补充（任务 1.7 实现时确定，见 [1.7 任务设计第 4 节](tasks/1.7-router-executor.md#4-重试规则表designmd-61)）：
+- 结果不确定的失败默认不重试；`retry.retry_on_ambiguous = true` 时可以重试。最后一个目标没有下一个可换，仍按默认处理
+- 除 502、503 以外的 5xx（501、505、52x …）与 500、504 同样按“不确定”处理；3xx 按“上游不可用”处理（换下一个目标）
+- 连接池排队超时（请求没有发出）换下一个目标
+- 所有目标都失败时：之前有不确定的尝试 → 504；最后一次尝试是 429 → 429，是 502 / 503 → 502，都带上游的 `Retry-After`（不转发上游的响应体）；否则 → 502。错误信息只列出失败的分类（6.10）
+- 配置了 `error_mapping` 时，返回响应之前的预读也受目标的空闲超时限制，超时按“不确定”处理
+
 另外三个限制：**总尝试次数**不超过目标数量，**所有尝试共享同一个截止时间**，以及**重试预算**：重试次数不能超过最近正常请求数的 20%，防止上游大面积故障时形成重试风暴（见 [stability.md 4.3](stability.md#43-调用层上游出问题时)）。完整的决策流程见 [diagrams.md 第 7 节](diagrams.md#7-活动图重试决策)。
 
 ### 6.2 熔断
@@ -717,7 +724,7 @@ Session 协程里的转发循环是“**读上游一块 → 写给客户端 → 
 | 413 | `payload_too_large` | 请求体过大 |
 | 431 | `headers_too_large` | 请求头过大（超过 64 KB） |
 | 429 | `rate_limited` | 超出限流 |
-| 502 | `upstream_unavailable` | 所有上游都失败了 |
+| 502 | `upstream_unavailable` | 所有上游都失败了（所有上游都在限流时是 429 `rate_limited`，见 6.1） |
 | 503 | `overloaded` | 网关过载 |
 | 504 | `upstream_timeout` | 上游超时，并且按规则不能重试 |
 
@@ -802,7 +809,7 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 - MiMo Token Plan 是订阅套餐，使用 `"billing": "subscription"`
 - 三家厂商的具体差异和推荐配置见 [providers.md](providers.md)
 - 完整的字段说明在 v1.0 实现时写入 `docs/configuration.md`
-- **当前支持情况（v0.2）**：`server`、`timeouts`、`providers`（含 `error_mapping`）、`proxy`、`models` 已实现（任务 1.1），可用 `llmgw check` 校验，示例见 [config/llmgw.example.json](../config/llmgw.example.json)。`keys`、`pricing`、`accounting`、`retry`、`providers[].quota` 在对应功能实现之前**会报错而不是被忽略**，避免用户误以为鉴权或预算已经生效
+- **当前支持情况（v0.2）**：`server`、`timeouts`、`providers`（含 `error_mapping`）、`proxy`、`models` 已实现（任务 1.1），可用 `llmgw check` 校验，示例见 [config/llmgw.example.json](../config/llmgw.example.json)。`retry`（`retry_on_ambiguous`）在任务 1.7 中实现；`keys`、`pricing`、`accounting`、`providers[].quota` 在对应功能实现之前**会报错而不是被忽略**，避免用户误以为鉴权或预算已经生效
 - 超时增加了 `first_byte_non_stream`（非流式请求等待响应头，默认 300 秒，见 6.3）；目标级的 `timeouts` 不能设置 `total`
 
 ---

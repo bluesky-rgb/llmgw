@@ -22,7 +22,7 @@
     "router":        ["core", "config"],
     "provider":      ["core", "config", "observability", "upstream", "stream"],
     "middleware":    ["core", "config", "observability", "accounting"],
-    "executor":      ["core", "config", "observability", "provider"],
+    "executor":      ["core", "config", "observability", "upstream", "provider"],
     "server":        ["core", "config", "observability", "middleware", "router", "executor"],
     "admin":         ["core", "config", "observability", "accounting"],
     "app":           ["core", "config", "observability", "upstream", "stream", "accounting",

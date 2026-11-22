@@ -71,7 +71,7 @@ struct Attempt {
     auto task = [](Attempt* self,
                    provider::Prepared pr) -> Task<Expected<Drained, upstream::AttemptError>> {
       auto s = co_await provider::attempt(self->env.client.get(), self->p, std::move(pr),
-                                          deadlines(), self->ctx.get());
+                                          deadlines(), std::chrono::seconds(10), self->ctx.get());
       if (!s) co_return unexpected(s.error());
       co_return co_await drain(s->get());
     };

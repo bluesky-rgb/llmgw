@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <array>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include <cctype>
 #include <exception>
 #include <memory>
@@ -16,6 +20,9 @@ namespace llmgw::provider {
 
 namespace {
 
+namespace asio = boost::asio;
+using namespace asio::experimental::awaitable_operators;  // NOLINT(google-build-using-namespace)
+
 bool iequals(std::string_view a, std::string_view b) {
   return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
     return std::tolower(static_cast<unsigned char>(x)) ==
@@ -23,26 +30,50 @@ bool iequals(std::string_view a, std::string_view b) {
   });
 }
 
-// upstream::Body → stream::Source。读取失败时把 upstream 原来的 AttemptError 记在 last_error 中：
-// open() 预读失败时 attempt() 原样返回它（独立审查 1.6 #6：重新构造会丢掉 timed_out 和 detail）。
-// last_error 是共享的：open() 失败时 Source 已经随之销毁
+// BodySource 与 attempt() 共享的状态：open() 失败时 Source 已经随之销毁
+struct SourceState {
+  /// 读取失败时 upstream 原来的 AttemptError：open() 预读失败时 attempt() 原样返回它
+  /// （独立审查 1.6 #6：重新构造会丢掉 timed_out 和 detail）
+  std::optional<upstream::AttemptError> last_error;
+  /// 有值：正在预读（open() 检查业务错误码），每次读取最多等这么久（独立审查 1.7 #2：
+  /// 原来预读不受任何超时限制，上游发完响应头就不动时只能等总超时）。open() 返回之后清空：
+  /// 之后的空闲超时由 Session 的看门狗负责，不在每个数据块上竞速（ADR-006）
+  std::optional<SteadyClock::duration> prefetch_idle;
+};
+
+// upstream::Body → stream::Source
 class BodySource final : public stream::Source {
  public:
-  BodySource(std::unique_ptr<upstream::Body> body,
-             std::shared_ptr<std::optional<upstream::AttemptError>> last_error)
-      : body_(std::move(body)), last_error_(std::move(last_error)) {}
+  BodySource(std::unique_ptr<upstream::Body> body, std::shared_ptr<SourceState> state)
+      : body_(std::move(body)), state_(std::move(state)) {}
   Task<Result<bool>> read(std::string* out) override {
-    auto r = co_await body_->read(out);
+    upstream::Outcome<bool> r = co_await read_once(out);
     if (!r) {
-      *last_error_ = r.error();
+      state_->last_error = r.error();
       co_return fail(r.error().to_error());
     }
     co_return *r;
   }
 
  private:
+  // 预读时与定时器竞速。两个分支都不抛异常（Body::read 不抛；定时器用 as_tuple）
+  Task<upstream::Outcome<bool>> read_once(std::string* out) {
+    const std::optional<SteadyClock::duration> idle =
+        state_->prefetch_idle;  // 先复制：之后有挂起点
+    if (!idle.has_value()) co_return co_await body_->read(out);
+    asio::steady_timer timer(co_await asio::this_coro::executor);
+    timer.expires_after(*idle);
+    auto r = co_await (body_->read(out) || timer.async_wait(asio::as_tuple(asio::use_awaitable)));
+    if (r.index() == 0) co_return std::get<0>(std::move(r));
+    co_return unexpected(upstream::AttemptError{.stage = upstream::Stage::kBody,
+                                                .maybe_sent = true,
+                                                .timed_out = true,
+                                                .reused_without_response = false,
+                                                .detail = "预读响应体时超过空闲超时"});
+  }
+
   std::unique_ptr<upstream::Body> body_;
-  std::shared_ptr<std::optional<upstream::AttemptError>> last_error_;
+  std::shared_ptr<SourceState> state_;
 };
 
 // 持有 stream 的选项所指向的错误码映射（stream 只保存指针），其余转发给 stream 返回的流
@@ -111,7 +142,7 @@ std::vector<Header> filter_response_headers(const std::vector<Header>& upstream_
 
 Task<Expected<std::unique_ptr<ResponseStream>, upstream::AttemptError>> attempt(
     upstream::Client* client, const config::Provider* provider, Prepared prepared,
-    upstream::Deadlines deadlines, RequestContext* ctx) {
+    upstream::Deadlines deadlines, SteadyClock::duration prefetch_idle, RequestContext* ctx) {
   const bool strip = prepared.strip_usage_chunk;
   auto sent = co_await client->send(provider, std::move(prepared.request), deadlines);
   if (!sent) co_return unexpected(sent.error());
@@ -119,13 +150,14 @@ Task<Expected<std::unique_ptr<ResponseStream>, upstream::AttemptError>> attempt(
     ResponseHead head{.status = sent->status, .headers = filter_response_headers(sent->headers)};
     auto mapping = convert(provider->error_mapping);
     stream::Options options{.strip_usage_chunk = strip, .error_mapping = mapping.get()};
-    auto last_error = std::make_shared<std::optional<upstream::AttemptError>>();
+    auto state = std::make_shared<SourceState>();
+    state->prefetch_idle = prefetch_idle;
     auto opened = co_await stream::open(
-        std::move(head), std::make_unique<BodySource>(std::move(sent->body), last_error), ctx,
-        options);
+        std::move(head), std::make_unique<BodySource>(std::move(sent->body), state), ctx, options);
+    state->prefetch_idle.reset();
     if (!opened) {
       // 预读（检查业务错误码）时出错：请求已经发出，可能已经计费
-      if (std::optional<upstream::AttemptError> e = std::move(*last_error); e.has_value()) {
+      if (std::optional<upstream::AttemptError> e = std::move(state->last_error); e.has_value()) {
         e->maybe_sent = true;
         co_return unexpected(std::move(*e));
       }

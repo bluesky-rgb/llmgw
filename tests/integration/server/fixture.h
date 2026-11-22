@@ -44,6 +44,7 @@ struct Probe {
 ///   throw       dispatch() 抛出异常      worker   响应头中带上 Worker 编号
 ///   big         64 KB × 200 块（背压）  medium   每 50 ms 一块，共 5 块
 ///   nextthrow   1 块之后 next() 抛异常   badstatus 状态码 1000（不合法）
+///   stall_short_idle  同 stall，但 ctx->upstream_idle = 300 ms（目标自己的空闲超时）
 class FakeDispatcher final : public Dispatcher {
  public:
   FakeDispatcher(WorkerInfo info, std::shared_ptr<Probe> probe)

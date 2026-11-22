@@ -121,6 +121,15 @@ struct UpstreamConfig {
   friend bool operator==(const UpstreamConfig&, const UpstreamConfig&) = default;
 };
 
+/// 重试规则（design.md 6.1，任务 1.7）。
+struct RetryConfig {
+  /// 是否允许重试“结果不确定”的失败：请求已经发出之后超时或断开、上游返回 500、504 等。
+  /// 上游可能已经处理并计费，默认不重试（返回 504 或原样返回），避免重复扣费
+  bool retry_on_ambiguous = false;
+
+  friend bool operator==(const RetryConfig&, const RetryConfig&) = default;
+};
+
 /// 字段改名：from → to。
 struct FieldRename {
   FieldPath from;
@@ -156,6 +165,7 @@ struct Snapshot {
   std::vector<Provider> providers;
   ProxyConfig proxy;
   UpstreamConfig upstream;
+  RetryConfig retry;
   std::vector<ModelConfig> models;
 
   /// 按名字查找；找不到返回 nullptr。返回的指针与快照的生命周期相同。

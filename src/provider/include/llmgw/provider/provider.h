@@ -36,9 +36,12 @@ struct Prepared {
 /// 成功时 ResponseStream 的状态码可能是 4xx/5xx，由 executor 按状态码决定是否重试；
 /// 失败时返回 upstream 的 AttemptError（阶段、maybe_sent）。不抛异常。
 /// provider 必须指向 client 的配置中的上游；ctx 必须比返回的 ResponseStream 活得久。
+/// prefetch_idle：配置了 error_mapping 时，返回之前要预读响应体（检查业务错误码），预读中每次
+/// 读取最多等这么久，超时按 {kBody, maybe_sent, timed_out} 返回。传目标的 timeouts.idle
+/// （不超过剩余的总时间）。返回之后的读取不受它限制（由 Session 的看门狗负责）。
 [[nodiscard]] Task<Expected<std::unique_ptr<ResponseStream>, upstream::AttemptError>> attempt(
     upstream::Client* client, const config::Provider* provider, Prepared prepared,
-    upstream::Deadlines deadlines, RequestContext* ctx);
+    upstream::Deadlines deadlines, SteadyClock::duration prefetch_idle, RequestContext* ctx);
 
 /// 上游的响应头中保留哪些（任务设计第 4
 /// 节）：Content-Type、Cache-Control、Retry-After、retry-after-ms； 上游的请求 ID 改名为

@@ -5,6 +5,9 @@
 #pragma once
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/cancellation_state.hpp>
+#include <boost/asio/cancellation_type.hpp>
+#include <boost/asio/this_coro.hpp>
 
 // 所有使用 llmgw 头文件的编译单元都必须定义 BOOST_ASIO_NO_DEPRECATED（根 CMakeLists.txt
 // 中统一定义）。 它会改变 Asio 成员函数的返回类型，部分编译单元定义、部分不定义会造成 ODR 违规：
@@ -28,5 +31,18 @@ namespace llmgw {
 ///   而是被悄悄吞掉、一直等到别的分支成功（独立审查发现）
 template <class T = void>
 using Task = boost::asio::awaitable<T>;
+
+/// 检查当前协程是否已被取消（见上面的约定：被取消之后、产生任何副作用之前先检查）。用法：
+///
+///     if (is_cancelled(co_await kCancellationState)) co_return ...;
+///
+/// ⚠️ 不能写成一个返回 Task<bool> 的协程：被取消之后 co_await 另一个协程本身就会抛出
+/// operation_aborted，检查永远返回不了 true（任务 1.7 发现：server 中原来的 is_cancelled()
+/// 就是这样，四处检查都是靠抛异常“碰巧”结束的）。co_await this_coro::cancellation_state 不会抛出。
+inline constexpr auto kCancellationState = boost::asio::this_coro::cancellation_state;
+
+[[nodiscard]] inline bool is_cancelled(const boost::asio::cancellation_state& state) {
+  return state.cancelled() != boost::asio::cancellation_type::none;
+}
 
 }  // namespace llmgw

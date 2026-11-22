@@ -404,6 +404,13 @@ UpstreamConfig read_upstream(ObjectReader r) {
   return u;
 }
 
+RetryConfig read_retry(ObjectReader r) {
+  RetryConfig c;
+  if (auto v = r.boolean("retry_on_ambiguous")) c.retry_on_ambiguous = *v;
+  r.finish();
+  return c;
+}
+
 // 一条改写规则的路径，以及它在配置中的位置（报错用）
 struct RuleAt {
   FieldPath path;

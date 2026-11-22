@@ -12,8 +12,9 @@ namespace llmgw::server::detail {
 
 class Worker {
  public:
-  Worker(unsigned index, std::shared_ptr<const config::Snapshot> config, SharedState* shared,
-         const DispatcherFactory& dispatcher_factory, const MetricsFactory& metrics_factory);
+  Worker(unsigned index, unsigned worker_count, std::shared_ptr<const config::Snapshot> config,
+         SharedState* shared, const DispatcherFactory& dispatcher_factory,
+         const MetricsFactory& metrics_factory);
   Worker(const Worker&) = delete;
   Worker& operator=(const Worker&) = delete;
   Worker(Worker&&) = delete;
@@ -30,9 +31,14 @@ class Worker {
  private:
   Task<> accept_loop();
 
-  // 析构顺序很重要：先销毁 io_context（它会销毁所有未完成的 Session 协程，
-  // 这些协程中的 ResponseStream 可能引用 Dispatcher 的连接池），再销毁 Dispatcher。
-  // 所以 io_context 用 unique_ptr 持有，在析构函数中显式先销毁。
+  // 析构顺序很重要（析构函数中显式控制）：
+  // 1. 先销毁 Dispatcher：Gateway 中的 upstream::Client 持有定时器、空闲连接等 I/O 对象，
+  //    析构时要用到 io_context 的服务，必须在 io_context 之前销毁（独立审查 1.7 #1：顺序反了时
+  //    ASan 报 heap-use-after-free）
+  // 2. 再销毁 io_context：它销毁所有未完成的 Session 协程。这些协程中的 ResponseStream、Body 通过
+  //    shared_ptr 持有连接池的状态，不依赖 Client 对象本身（任务 1.4 U10 验证过 Body 比 Client
+  //    活得久）
+  // 所以 Dispatcher 的实现不能让未完成的协程在析构时访问 Dispatcher 对象本身。
   std::unique_ptr<MetricsRecorder> metrics_;
   std::unique_ptr<Dispatcher> dispatcher_;
   std::unique_ptr<asio::io_context> ioc_;

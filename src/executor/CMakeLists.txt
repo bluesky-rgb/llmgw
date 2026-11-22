@@ -1,2 +1,3 @@
-# 模块 executor：目前还没有源文件，依赖关系已经由 llmgw_add_module 校验
-llmgw_add_module(executor DEPS core config observability provider)
+# 模块 executor：按目标列表执行请求、重试规则表（任务 1.7）
+llmgw_add_module(executor SOURCES executor.cpp classify.cpp
+                 DEPS core config observability upstream provider)
