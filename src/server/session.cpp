@@ -19,8 +19,43 @@ Error make_error(ErrorCode code, std::string message) {
 
 }  // namespace
 
+namespace {
+std::string peer_address(const tcp::socket& socket) {
+  beast::error_code ec;
+  const auto ep = socket.remote_endpoint(ec);
+  if (ec) return {};
+  auto addr = ep.address();
+  if (addr.is_v6() && addr.to_v6().is_v4_mapped()) {  // 双栈监听时 IPv4 客户端显示为 ::ffff:a.b.c.d
+    addr = asio::ip::make_address_v4(asio::ip::v4_mapped, addr.to_v6());
+  }
+  return addr.to_string();
+}
+}  // namespace
+
 Session::Session(tcp::socket socket, WorkerContext* worker)
-    : socket_(std::move(socket)), worker_(worker), guard_(worker->shared) {}
+    : socket_(std::move(socket)),
+      peer_(peer_address(socket_)),
+      worker_(worker),
+      guard_(worker->shared) {}
+
+RequestInfo Session::make_info(const Request& request, std::string request_id,
+                               Endpoint endpoint) const {
+  const auto now = SteadyClock::now();
+  return RequestInfo{
+      .request_id = std::move(request_id),
+      .model = {},
+      .stream = false,
+      .body = {},
+      .received_at = now,
+      .deadline = now + worker_->config->timeouts.total,
+      .endpoint = endpoint,
+      // 多个 Authorization 头：前面的代理可能取的是另一个，不知道该信哪一个，当作没有 key
+      // （任务 2.2 独立审查）
+      .bearer_token = request.count(http::field::authorization) == 1
+                          ? bearer_token(request[http::field::authorization])
+                          : std::string(),
+      .client_address = peer_};
+}
 
 Task<> run_session(std::unique_ptr<Session> session) { co_await session->run(); }
 
@@ -183,10 +218,7 @@ Task<bool> Session::handle(Request request) {
                            keep_alive, version);
       co_return keep_alive;
     }
-    co_return co_await write_json(
-        200, models_body(*worker_->config),
-        ReplyTo{.request_id = id, .keep_alive = keep_alive, .version = version}) &&
-        keep_alive;
+    co_return co_await handle_models(std::move(request), id);
   }
   co_await write_error(
       make_error(ErrorCode::kNotFound, "路径不存在：" + std::string(path) +

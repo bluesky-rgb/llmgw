@@ -6,6 +6,8 @@
 #include <string>
 #include <utility>
 
+#include "llmgw/middleware/auth.h"
+
 namespace llmgw::middleware {
 namespace {
 
@@ -83,9 +85,8 @@ std::vector<const MiddlewareFactory*> Registry::all() const {
 }
 
 Result<void> register_builtin(Registry* registry) {
-  // 内置的插件在任务 2.2–2.4 中加入，每个一行：
-  //   if (auto r = registry->add(std::make_unique<AuthFactory>()); !r) return r;
-  (void)registry;
+  // 每个内置插件一行（ADR-009）；ratelimit、budget 在任务 2.3、2.4 中加入
+  if (auto r = registry->add(make_auth_factory()); !r) return r;
   return {};
 }
 

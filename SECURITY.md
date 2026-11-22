@@ -9,9 +9,9 @@
 
 The `main` branch and the latest release receive security fixes. Older releases do not.
 
-> **当前状态：** 现阶段（v0.2 Alpha）网关**不做客户端鉴权**（任务 2.2 实现）。所以默认只允许监听本机地址，监听其他地址需要显式加 `--allow-unauthenticated`。这个检查只针对数据面（`server.host`）；观测面（默认 `0.0.0.0:9100`）目前只提供 `/health`、`/ready`，不含敏感信息，`/metrics` 上线（任务 2.8）之前会把检查扩展到观测面。“没有鉴权的网关被他人访问”属于已知限制，不作为漏洞处理；但绕过这个默认限制的方法是漏洞。
+> **当前状态：** 客户端鉴权是可选的（`pipeline` 中的 `auth` 插件，任务 2.2）。没有启用鉴权时默认只允许监听本机地址，监听其他地址需要显式加 `--allow-unauthenticated`。这个检查只针对数据面（`server.host`）；观测面（默认 `0.0.0.0:9100`）目前只提供 `/health`、`/ready`，不含敏感信息，`/metrics` 上线（任务 2.8）之前会把检查扩展到观测面。“没有鉴权的网关被他人访问”属于已知限制，不作为漏洞处理；但绕过这个默认限制的方法是漏洞。
 >
-> **Current status:** the gateway does not authenticate clients yet (planned in task 2.2). By default it refuses to listen on non-loopback addresses unless started with `--allow-unauthenticated`. The check covers the data plane (`server.host`); the observability listener (default `0.0.0.0:9100`) currently serves only `/health` and `/ready`, and will be covered before `/metrics` lands (task 2.8). Access to an unauthenticated gateway is a known limitation, but a way to bypass the loopback-only default *is* a vulnerability.
+> **Current status:** client authentication is optional (the `auth` plugin in `pipeline`, task 2.2). Without it, the gateway refuses to listen on non-loopback addresses unless started with `--allow-unauthenticated`. The check covers the data plane (`server.host`); the observability listener (default `0.0.0.0:9100`) currently serves only `/health` and `/ready`, and will be covered before `/metrics` lands (task 2.8). Access to an unauthenticated gateway is a known limitation, but a way to bypass the loopback-only default *is* a vulnerability.
 
 ## 报告漏洞 / Reporting a vulnerability
 
@@ -43,9 +43,10 @@ We acknowledge reports within 7 days and provide an assessment with a fix or mit
 
 - API key、代理密码或请求内容出现在日志、错误信息、指标或响应中
 - 畸形的请求或上游响应导致崩溃、内存错误、无限占用内存或连接
-- 绕过“默认只监听本机”的限制；以后的鉴权、限额被绕过
+- 绕过“默认只监听本机”的限制；绕过鉴权（auth 插件）；以后的限额被绕过
+- 网关 key 出现在日志、错误信息、指标中，或者被转发给上游
 - 依赖库中影响 llmgw 的已知漏洞
 
 不属于：上游供应商自身的问题；需要先控制网关所在主机或配置文件才能做到的事；没有鉴权的网关被访问（见上文）。
 
-In scope: secret leakage (keys, proxy passwords, request content) through logs, errors, metrics or responses; crashes, memory errors or unbounded resource use caused by malformed requests or upstream responses; bypassing the loopback-only default or (future) authentication and quotas; vulnerable dependencies affecting llmgw. Out of scope: issues of upstream providers; attacks that require control of the host or the config file; access to an unauthenticated gateway.
+In scope: secret leakage (keys, proxy passwords, request content) through logs, errors, metrics or responses; crashes, memory errors or unbounded resource use caused by malformed requests or upstream responses; bypassing the loopback-only default, authentication, or (future) quotas; gateway keys appearing in logs, errors or metrics, or forwarded upstream; vulnerable dependencies affecting llmgw. Out of scope: issues of upstream providers; attacks that require control of the host or the config file; access to an unauthenticated gateway.

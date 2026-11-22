@@ -92,6 +92,37 @@ void read_pipeline(ObjectReader& top, std::vector<PipelineEntry>* out) {
   }
 }
 
+// 解析 JSON 文本；语法错误时记录问题并返回 false
+bool parse_json(std::string_view json_text, Json* root, Diagnostics* diag) {
+  try {
+    *root = Json::parse(json_text);
+    return true;
+  } catch (const Json::parse_error& e) {
+    std::string detail = e.what();
+    if (auto pos = detail.find(": "); pos != std::string::npos) detail = detail.substr(pos + 2);
+    // nlohmann 的说明末尾有 "; last read: '<出错位置附近的原文>'"：原文可能是 key、代理密码，
+    // 不能打印（任务 2.2 独立审查 #1）。去掉它和之后的部分，位置由行号、列号给出
+    if (auto pos = detail.find("; last read:"); pos != std::string::npos) detail.resize(pos);
+    diag->error(line_col(json_text, e.byte > 0 ? e.byte - 1 : 0), "JSON 语法错误：" + detail);
+  } catch (const Json::exception& e) {
+    // 比如数字溢出（1e999）：nlohmann 抛出的是 out_of_range，不带位置信息（模糊测试发现）
+    std::string detail = e.what();
+    if (auto pos = detail.find("] "); pos != std::string::npos) detail = detail.substr(pos + 2);
+    diag->error("（整个文件）", "JSON 中的数字超出范围或无法表示：" + detail);
+  }
+  return false;
+}
+
+// keys：网关 key（任务 2.2）。可以没有
+void read_keys(ObjectReader& top, std::vector<KeyConfig>* out) {
+  const Json* keys = top.array("keys");
+  if (keys == nullptr) return;
+  for (std::size_t i = 0; i < keys->size(); ++i) {
+    ObjectReader r((*keys)[i], index_path("keys", i), top.diag());
+    if (r.valid()) out->push_back(detail::read_key(std::move(r)));
+  }
+}
+
 // 名字唯一
 template <class T>
 void check_unique(const std::vector<T>& items, const char* section, const char* what,
@@ -222,19 +253,7 @@ LoadReport parse(std::string_view json_text, const LoadOptions& options) {
 
   if (json_text.starts_with("\xEF\xBB\xBF")) json_text.remove_prefix(3);  // UTF-8 BOM
   Json root;
-  try {
-    root = Json::parse(json_text);
-  } catch (const Json::parse_error& e) {
-    std::string detail = e.what();
-    if (auto pos = detail.find(": "); pos != std::string::npos) detail = detail.substr(pos + 2);
-    diag.error(line_col(json_text, e.byte > 0 ? e.byte - 1 : 0), "JSON 语法错误：" + detail);
-    report.issues = std::move(diag.issues());
-    return report;
-  } catch (const Json::exception& e) {
-    // 比如数字溢出（1e999）：nlohmann 抛出的是 out_of_range，不带位置信息（模糊测试发现）
-    std::string detail = e.what();
-    if (auto pos = detail.find("] "); pos != std::string::npos) detail = detail.substr(pos + 2);
-    diag.error("（整个文件）", "JSON 中的数字超出范围或无法表示：" + detail);
+  if (!parse_json(json_text, &root, &diag)) {
     report.issues = std::move(diag.issues());
     return report;
   }
@@ -255,13 +274,14 @@ LoadReport parse(std::string_view json_text, const LoadOptions& options) {
     read_array(top, "models", &snapshot->models,
                [&](ObjectReader r) { return detail::read_model(std::move(r), global); });
     read_pipeline(top, &snapshot->pipeline);
-    top.unsupported("keys", "将在 v0.3 提供，任务 2.2", "目前网关不做鉴权，请只在可信网络中使用");
+    read_keys(top, &snapshot->keys);
     top.unsupported("pricing", "将在 v0.3 提供，任务 2.4");
     top.unsupported("accounting", "将在 v0.3 提供，任务 2.4");
     top.finish();
 
     check_unique(snapshot->providers, "providers", "上游", &diag);
     check_unique(snapshot->models, "models", "模型", &diag);
+    detail::check_keys(snapshot->keys, &diag);
     check_references(*snapshot, &diag);
     if (options.resolve_env) resolve_keys(snapshot.get(), getenv, &diag);
   }

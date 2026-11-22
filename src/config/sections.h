@@ -39,5 +39,8 @@ ProxyConfig read_proxy(ObjectReader r, const EnvLookup& getenv, bool resolve_env
 UpstreamConfig read_upstream(ObjectReader r);
 RetryConfig read_retry(ObjectReader r);
 ModelConfig read_model(ObjectReader r, const Timeouts& global);
+/// keys[] 中的一项（keys.cpp）。id 和哈希的唯一性在读完全部之后检查（check_keys）
+KeyConfig read_key(ObjectReader r);
+void check_keys(const std::vector<KeyConfig>& keys, Diagnostics* diag);
 
 }  // namespace llmgw::config::detail

@@ -61,6 +61,10 @@ bool is_plain_chunked(std::string_view transfer_encoding);
 /// 逐跳（hop-by-hop）的响应头：转发上游的响应头时要去掉，由网关自己决定。
 bool is_hop_by_hop(std::string_view header_name);
 
+/// Authorization 头中的 Bearer token（RFC 6750 2.1：`Bearer` 大小写不敏感，后面一个或多个空格，
+/// 然后是 token，token 中不能有空白）。不是这种格式时返回空。
+std::string bearer_token(std::string_view authorization);
+
 /// 中间件附加的响应头能否写出：必须是合法的响应头（safe_header），不能是逐跳的头，也不能是网关自己
 /// 决定的头（Content-Type、X-Request-Id、x-should-retry、Retry-After 等：限流插件要给出 Retry-After
 /// 时用 Error::retry_after）。

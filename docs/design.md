@@ -106,7 +106,7 @@
 | 网络 | 出站代理 | 每个上游可以单独配置 HTTP / HTTPS 代理，也支持 `HTTPS_PROXY` 环境变量 | ⬜ |
 | 容量 | 上游配额感知 | 读取上游的剩余配额，快用完时主动把流量分到其他目标（见 [6.13](#613-上游配额感知)） | ⬜ |
 | 性能 | 背压 | 客户端慢时自动放慢读取上游 | ⬜ 原型的队列没有上限 |
-| 安全 | 网关 API key 鉴权 | 配置中只保存 key 的哈希，比较时用常量时间算法 | 🟡 明文保存，普通比较 |
+| 安全 | 网关 API key 鉴权 | 配置中只保存 key 的哈希，比较时用常量时间算法 | 🟡 明文保存，普通比较（新架构：✅ 任务 2.2） |
 | 成本 | Token 统计与费用核算 | 按价格表计算每个请求的费用 | 🟡 只统计 Token |
 | 成本 | 预算 | 按 key 设置日、月预算，先冻结后结算 | ⬜ |
 | 成本 | 限流 | 按 key 限制 RPM（每分钟请求数）、TPM（每分钟 Token 数）和**同时进行的请求数** | ⬜ |
@@ -448,7 +448,7 @@ llmgw/
 | simdjson | 热路径上的 JSON 解析 | FetchContent |
 | nlohmann/json | 配置与构造 JSON | FetchContent |
 | GoogleTest | 测试 | FetchContent |
-| xxHash 或 BLAKE3 | API key 哈希 | FetchContent |
+| OpenSSL（SHA-256） | 网关 key 的哈希（ADR-010：不引入 BLAKE3） | 系统库（已经用于 TLS） |
 
 ### 4.3 编码规范
 
@@ -771,7 +771,7 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
   "timeouts": { "connect": 10, "first_byte": 60, "first_byte_non_stream": 300, "idle": 60, "total": 600 },
 
   "keys": [
-    { "id": "app-chatbot", "hash": "blake3:9f2c…", "budget": { "daily_usd": 20, "on_exceed": "reject" },
+    { "id": "app-chatbot", "hash": "sha256:9f2c…", "budget": { "daily_usd": 20, "on_exceed": "reject" },
       "limits": { "rpm": 600, "tpm": 200000, "concurrency": 50 } }
   ],
 
@@ -809,7 +809,7 @@ v1.0 的配置格式（JSON），和原型相比增加了 `server`、`timeouts`�
 - MiMo Token Plan 是订阅套餐，使用 `"billing": "subscription"`
 - 三家厂商的具体差异和推荐配置见 [providers.md](providers.md)
 - 完整的字段说明在 v1.0 实现时写入 `docs/configuration.md`
-- **当前支持情况（v0.2）**：`server`、`timeouts`、`providers`（含 `error_mapping`）、`proxy`、`models` 已实现（任务 1.1），可用 `llmgw check` 校验，示例见 [config/llmgw.example.json](../config/llmgw.example.json)。`retry`（`retry_on_ambiguous`）在任务 1.7 中实现；`keys`、`pricing`、`accounting`、`providers[].quota` 在对应功能实现之前**会报错而不是被忽略**，避免用户误以为鉴权或预算已经生效
+- **当前支持情况（v0.2）**：`server`、`timeouts`、`providers`（含 `error_mapping`）、`proxy`、`models` 已实现（任务 1.1），可用 `llmgw check` 校验，示例见 [config/llmgw.example.json](../config/llmgw.example.json)。`retry`（`retry_on_ambiguous`）在任务 1.7 中实现；`pipeline` 在 2.1、`keys`（`id`、`hash`）在 2.2 中实现；`keys[].limits`、`keys[].budget`、`pricing`、`accounting`、`providers[].quota` 在对应功能实现之前**会报错而不是被忽略**，避免用户误以为鉴权或预算已经生效
 - 超时增加了 `first_byte_non_stream`（非流式请求等待响应头，默认 300 秒，见 6.3）；目标级的 `timeouts` 不能设置 `total`
 
 ---

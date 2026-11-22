@@ -67,14 +67,12 @@ Task<bool> Session::handle_chat(Request request, std::string request_id) {
     co_await write_error(fields.error(), std::move(request_id), keep_alive, request.version());
     co_return keep_alive;
   }
-  const auto now = SteadyClock::now();
-  RequestContext ctx(RequestInfo{.request_id = std::move(request_id),
-                                 .model = std::move(fields->model),
-                                 .stream = fields->stream,
-                                 .body = std::move(request.body()),
-                                 .received_at = now,
-                                 .deadline = now + worker_->config->timeouts.total},
-                     worker_->config);
+  RequestInfo info = make_info(request, std::move(request_id), Endpoint::kChatCompletions);
+  info.model = std::move(fields->model);
+  info.stream = fields->stream;
+  info.body = std::move(request.body());
+  const auto now = info.received_at;
+  RequestContext ctx(std::move(info), worker_->config);
   middleware::Chain::Run run;
   Exchange ex{.ctx = &ctx,
               .run = &run,
@@ -115,29 +113,74 @@ Task<bool> Session::handle_chat(Request request, std::string request_id) {
   // 无论竞速怎样结束，都要执行 on_complete（ctx.outcome 此时是终态）。没有中间件时连协程都不调用
   // （热路径上不多分配一个协程帧）
   bool completed = true;
-  if (worker_->chain != nullptr && run.entered > 0) completed = co_await finish_chain(&ex);
+  if (worker_->chain != nullptr && run.entered > 0) completed = co_await finish_chain(&ctx, &run);
   const bool keep_connection = reuse && completed;
   co_return keep_connection;
 }
 
-Task<bool> Session::finish_chain(Exchange* ex) {
+Task<bool> Session::finish_chain(RequestContext* ctx, middleware::Chain::Run* run_ptr) {
   middleware::Chain* chain = worker_->chain;
-  if (chain == nullptr || ex->run->entered == 0) co_return true;  // 没有中间件：不建定时器
+  if (chain == nullptr || run_ptr->entered == 0) co_return true;  // 没有中间件：不建定时器
   asio::steady_timer timer(socket_.get_executor());
   timer.expires_after(worker_->complete_timeout);
   // Chain::on_complete 捕获插件的全部异常，不会抛出（竞速的分支不能抛异常）
-  auto r = co_await (chain->on_complete(ex->ctx, ex->run) || timer_fired(&timer));
+  auto r = co_await (chain->on_complete(ctx, run_ptr) || timer_fired(&timer));
   if (r.index() == 0) co_return true;
-  const middleware::Chain::Run& run = *ex->run;
+  const middleware::Chain::Run& run = *run_ptr;
   const bool skipped = run.completed < run.entered;  // 有插件没有执行 on_complete
   const std::string plugin = run.cut_off ? chain->name(*run.cut_off) : std::string("unknown");
   std::fprintf(stderr,
                "[server] request %s: plugin %s on_complete did not finish within %lld ms%s\n",
-               ex->ctx->request.request_id.c_str(), plugin.c_str(),
+               ctx->request.request_id.c_str(), plugin.c_str(),
                static_cast<long long>(worker_->complete_timeout.count()),
                skipped ? "; skipped the remaining plugins and closed the connection" : "");
   worker_->metrics->increment(Counter::kMiddlewareErrors, {plugin, "complete_timeout"});
   co_return !skipped;
+}
+
+Task<bool> Session::handle_models(Request request, std::string request_id) {
+  const bool keep_alive = request.keep_alive() && request.version() == 11;
+  const ReplyTo to{
+      .request_id = request_id, .keep_alive = keep_alive, .version = request.version()};
+  middleware::Chain* chain = worker_->chain;
+  if (chain == nullptr) {
+    co_return co_await write_json(200, models_body(*worker_->config), to) && keep_alive;
+  }
+  // 与聊天接口一样经过中间件链（鉴权等），同样与客户端断开、总超时竞速
+  RequestContext ctx(make_info(request, std::move(request_id), Endpoint::kListModels),
+                     worker_->config);
+  middleware::Chain::Run run;
+  asio::steady_timer deadline(socket_.get_executor());
+  deadline.expires_at(ctx.request.deadline);
+  auto r =
+      co_await (chain->on_request(&ctx, &run) || client_closed(&socket_) || timer_fired(&deadline));
+  bool reuse = false;
+  if (r.index() == 0) {
+    middleware::Decision decision = std::move(std::get<0>(r));
+    if (decision.reject) {
+      const int status = http_status(decision.reject->code);
+      set_outcome(&ctx, run.failed ? OutcomeKind::kFailed : OutcomeKind::kRejected, status,
+                  decision.reject->code);
+      reuse = co_await write_error(std::move(*decision.reject), to.request_id, keep_alive,
+                                   to.version, run.response_headers) &&
+              keep_alive;
+    } else {
+      reuse = co_await write_json(200, models_body(*worker_->config), to, std::nullopt,
+                                  run.response_headers);
+      set_outcome(&ctx, reuse ? OutcomeKind::kSuccess : OutcomeKind::kClientAborted,
+                  reuse ? 200 : 0);
+      reuse = reuse && keep_alive;
+    }
+  } else if (r.index() == 1) {
+    set_outcome(&ctx, OutcomeKind::kClientAborted, 0);
+  } else {
+    set_outcome(&ctx, OutcomeKind::kTimeout, 504, ErrorCode::kUpstreamTimeout);
+    co_await write_error(make_error(ErrorCode::kUpstreamTimeout, "请求超过总超时"), to.request_id,
+                         false, to.version, run.response_headers);
+  }
+  const bool completed = run.entered == 0 || co_await finish_chain(&ctx, &run);
+  const bool keep_connection = reuse && completed;
+  co_return keep_connection;
 }
 
 Task<bool> Session::relay(Exchange* ex) {

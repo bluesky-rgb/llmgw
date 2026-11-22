@@ -8,6 +8,7 @@
 #include "../upstream/harness.h"
 #include "gateway.h"
 #include "llmgw/server/server.h"
+#include "plugins.h"
 
 namespace llmgw::test {
 
@@ -15,13 +16,15 @@ namespace llmgw::test {
 /// upstream::Client）
 struct Gateway {
   std::unique_ptr<server::Server> server;
-  explicit Gateway(const std::shared_ptr<config::Snapshot>& cfg) {
+  /// chain：中间件链（任务 2.2 起：auth 等真实的插件，用 app::make_chain_factory 创建）
+  explicit Gateway(const std::shared_ptr<config::Snapshot>& cfg, server::ChainFactory chain = {}) {
     auto tls = upstream::make_tls_contexts(*cfg);
     if (!tls) throw std::runtime_error(tls.error().message);
     server = std::make_unique<server::Server>(
         server::ServerOptions{.config = cfg,
                               .dispatcher_factory = app::make_dispatcher_factory(cfg, *tls),
-                              .metrics_factory = {}});
+                              .metrics_factory = {},
+                              .chain_factory = std::move(chain)});
     if (auto r = server->start(); !r) throw std::runtime_error(r.error().message);
   }
 };
@@ -35,6 +38,18 @@ struct Caller {
     upstream::Request req = post(body);
     req.target = "/v1/chat/completions";
     for (auto& h : extra) req.headers.push_back(std::move(h));
+    return env.get(gw, std::move(req), deadlines(2s, 10s));
+  }
+  /// 用指定的 Authorization 访问（空字符串：不带 Authorization）。target 为空时是聊天接口
+  Fetched call_with_auth(const std::string& authorization, const std::string& body,
+                         const std::string& method = "POST",
+                         const std::string& target = "/v1/chat/completions") {
+    upstream::Request req = post(body);
+    req.method = method;
+    req.target = target;
+    std::erase_if(req.headers, [](const Header& h) { return h.name == "Authorization"; });
+    if (!authorization.empty()) req.headers.push_back({"Authorization", authorization});
+    if (method == "GET") req.body.clear();
     return env.get(gw, std::move(req), deadlines(2s, 10s));
   }
 };

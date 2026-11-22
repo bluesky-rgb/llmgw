@@ -31,6 +31,12 @@ struct Snapshot;
 
 using SteadyClock = std::chrono::steady_clock;
 
+/// 请求的是哪个接口（插件据此决定是否计数、计费：列出模型不产生费用）。
+enum class Endpoint : std::uint8_t {
+  kChatCompletions,  ///< POST /v1/chat/completions
+  kListModels,       ///< GET /v1/models
+};
+
 /// 请求本身的信息。写入者：Session（创建上下文时），之后只读。
 struct RequestInfo {
   std::string request_id;               ///< 返回给客户端的 X-Request-Id
@@ -39,6 +45,14 @@ struct RequestInfo {
   std::string body;                     ///< 原始请求体
   SteadyClock::time_point received_at;  ///< 收到请求的时间
   SteadyClock::time_point deadline;     ///< 整个请求的截止时间
+  Endpoint endpoint = Endpoint::kChatCompletions;
+  /// Authorization: Bearer 之后的部分（客户端的网关 key）；没有时为空。由 auth 插件校验。
+  /// ⚠️ 这是密钥：不能写进日志、错误信息和指标，也不能转发给上游
+  // 显式的 {}：GCC 的 -Wmissing-field-initializers 对没有默认初始化器的成员报警（指定初始化器省略了
+  // 它们时），clang-tidy 又认为它多余，两者冲突，以编译器为准
+  std::string bearer_token{};  // NOLINT(readability-redundant-member-init)
+  /// 客户端的 IP 地址（TCP 连接的对端；不看 X-Forwarded-For，那是客户端可以伪造的）
+  std::string client_address{};  // NOLINT(readability-redundant-member-init)：同上
 };
 
 /// 鉴权结果。写入者：auth 中间件。

@@ -140,7 +140,6 @@ TEST(Rules, top_level_requires_providers_and_models) {
 }
 
 TEST(Rules, not_yet_supported_sections_are_errors_not_ignored) {
-  expect_error(minimal(R"(, "keys": [])"), "keys", "v0.3");
   expect_error(minimal(R"(, "pricing": [])"), "pricing", "尚未支持");
   expect_error(minimal(R"(, "accounting": {})"), "accounting", "尚未支持");
   expect_error(minimal("", R"(, "quota": {"rpm": 60})"), "providers[0].quota", "尚未支持");

@@ -11,7 +11,7 @@ llmgw 把 OpenAI（GPT）、MiniMax、小米 MiMo 以及本地 llama.cpp 等多�
 
 ![三大支柱](docs/images/17-value-pillars.svg)
 
-> **项目状态：** v0.2 Alpha（开发中，尚未发布；目前的程序版本号是 0.1.0）：新架构已经可以运行（[使用手册](docs/usage.md)）——OpenAI 兼容接口、故障切换、不会重复扣费的重试规则、四种超时、连接池、背压。**还没有客户端鉴权、限流和预算**（v0.3），请只在本机或可信网络中使用；数据面监听非本机地址时，`llmgw serve` 默认拒绝启动，除非显式加 `--allow-unauthenticated`。v1.0 计划 1 月发布（[落地计划](docs/roadmap.md)）。产品定位、目标用户和开源策略见 [产品定义](docs/product.md)。
+> **项目状态：** v0.2 Alpha（开发中，尚未发布；目前的程序版本号是 0.1.0）：新架构已经可以运行（[使用手册](docs/usage.md)）——OpenAI 兼容接口、故障切换、不会重复扣费的重试规则、四种超时、连接池、背压。客户端鉴权（网关 key，配置中只保存哈希）已经可用；**还没有限流和预算**（v0.3）。没有启用鉴权时，数据面监听非本机地址会被 `llmgw serve` 拒绝，除非显式加 `--allow-unauthenticated`。v1.0 计划 1 月发布（[落地计划](docs/roadmap.md)）。产品定位、目标用户和开源策略见 [产品定义](docs/product.md)。
 
 ## 解决什么问题
 
@@ -69,7 +69,8 @@ client.chat.completions.create(model="smart", messages=[{"role": "user", "conten
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build && ctest --test-dir build
 
-# 配置（示例已包含 GPT、MiniMax 国内站、MiMo Token Plan）。v0.2 还没有鉴权：只监听本机
+# 配置（示例已包含 GPT、MiniMax 国内站、MiMo Token Plan）。示例没有启用鉴权：只监听本机
+# （要给其他机器用：llmgw keygen 生成网关 key，见使用手册的“鉴权”一节）
 cp config/llmgw.example.json llmgw.json
 sed -i 's/"host": "0.0.0.0"/"host": "127.0.0.1"/' llmgw.json
 export OPENAI_API_KEY=sk-...  MINIMAX_API_KEY=...  MIMO_API_KEY=tp-...

@@ -30,6 +30,7 @@ USER llmgw
 # 数据面、观测面（/health、/ready）
 EXPOSE 8080 9100
 ENTRYPOINT ["llmgw"]
-# 任务 2.2 之前网关不做客户端鉴权：容器中监听 0.0.0.0，所以默认会拒绝启动并说明原因。
-# 确认只有可信的客户端能访问时再加 --allow-unauthenticated（见 docs/usage.md）
+# 示例配置没有启用客户端鉴权，而容器中监听 0.0.0.0，所以默认会拒绝启动并说明原因。
+# 挂载启用了 auth 插件的配置（见 docs/usage.md 的“鉴权”）；或者确认只有可信的客户端能访问时
+# 加 --allow-unauthenticated
 CMD ["serve", "-c", "/etc/llmgw/llmgw.json"]

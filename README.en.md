@@ -9,7 +9,7 @@
 
 llmgw puts several model providers — OpenAI (GPT), MiniMax, Xiaomi MiMo, a local llama.cpp, or anything else that speaks the OpenAI API — behind one OpenAI-compatible endpoint. Applications only change their `base_url`; when one provider fails, the request moves to the next one; and the retry rules are designed so that **a retry never charges you twice**.
 
-> **Status: v0.2 Alpha (in development, not released yet; the binary currently reports 0.1.0).** The new architecture runs ([usage guide](docs/usage.md), in Chinese): the OpenAI-compatible API, failover, billing-safe retry rules, four kinds of timeouts, connection pooling and backpressure. **There is no client authentication, rate limiting or budgeting yet** (planned for v0.3) — run it on localhost or a trusted network only; `llmgw serve` refuses to listen on a non-local address unless you pass `--allow-unauthenticated`. v1.0 is planned for January ([roadmap](docs/roadmap.md)).
+> **Status: v0.2 Alpha (in development, not released yet; the binary currently reports 0.1.0).** The new architecture runs ([usage guide](docs/usage.md), in Chinese): the OpenAI-compatible API, failover, billing-safe retry rules, four kinds of timeouts, connection pooling and backpressure. Client authentication with gateway keys (only their hashes are stored in the config) is available; **rate limiting and budgeting are not yet** (planned for v0.3). Without authentication enabled, `llmgw serve` refuses to listen on a non-local address unless you pass `--allow-unauthenticated`. v1.0 is planned for January ([roadmap](docs/roadmap.md)).
 >
 > The design documents are written in Chinese. This page, [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) are the English entry points; issues and discussions in English are welcome.
 
@@ -45,7 +45,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build && ctest --test-dir build
 
 # Configure (the example includes GPT, MiniMax China and MiMo Token Plan).
-# v0.2 has no authentication yet: listen on localhost only
+# The example does not enable authentication: listen on localhost only
+# (to serve other machines, create gateway keys with `llmgw keygen`; see "鉴权" in the usage guide)
 cp config/llmgw.example.json llmgw.json
 sed -i 's/"host": "0.0.0.0"/"host": "127.0.0.1"/' llmgw.json
 export OPENAI_API_KEY=sk-...  MINIMAX_API_KEY=...  MIMO_API_KEY=tp-...

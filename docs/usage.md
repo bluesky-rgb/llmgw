@@ -14,8 +14,8 @@
 | 请求改写：替换模型名、`drop_fields`、`rename_fields`、`set_fields` | ✅ 1.6 |
 | 流式响应自动要求返回用量（客户端没要求时再去掉，客户端看到的与直连相同）；MiniMax 业务错误码映射 | ✅ 1.5、1.6 |
 | 背压（客户端读得慢时不再从上游拉取）、客户端断开时立即取消上游请求 | ✅ 1.3 |
-| 中间件链（`pipeline`）与插件注册表；`llmgw plugins` | ✅ 2.1（还没有内置插件） |
-| 客户端鉴权（网关 key） | ⏳ 2.2（v0.3） |
+| 中间件链（`pipeline`）与插件注册表；`llmgw plugins` | ✅ 2.1 |
+| 客户端鉴权（网关 key，配置中只保存哈希）；`llmgw keygen` | ✅ 2.2 |
 | 限流、费用核算与预算 | ⏳ 2.3、2.4 |
 | 熔断、重试预算 | ⏳ 2.5 |
 | Prometheus 指标、访问日志 | ⏳ 2.8 |
@@ -57,10 +57,11 @@ export OPENAI_API_KEY=sk-...  MINIMAX_API_KEY=...  MIMO_API_KEY=tp-...
 | `providers[]` | `name`、`base_url`（带 `/v1`）、`api_key_env`、`max_connections`、`error_mapping`、`ca_file` |
 | `proxy.https` | `"env"` 表示读取 `HTTPS_PROXY` / `NO_PROXY`；`proxy.per_provider` 可以按上游设置代理或 `"direct"` |
 | `models[].targets[]` | 按顺序尝试：`provider`、`model`（上游的模型名），以及 `drop_fields`、`rename_fields`、`set_fields`、`timeouts` |
-| `pipeline` | 按顺序启用的中间件插件：`["auth", {"name": "ratelimit", "config": {...}}]`。插件名拼错时启动失败并列出可用的插件（`llmgw plugins`）。v0.2 还没有内置插件 |
+| `pipeline` | 按顺序启用的中间件插件。每一项写插件名 `"auth"`，或者带配置 `{"name": "auth", "config": {"failures_per_minute": 20}}`。`auth` 应该放在第一个（后面的插件才能拿到已经鉴权的 key）。插件名拼错时启动失败并列出可用的插件（`llmgw plugins`）。目前有 `auth` |
+| `keys[]` | 网关 key：`id`（日志和用量中的标识）、`hash`（`llmgw keygen` 输出的 `sha256:…`）。**配置中只能写哈希**，写了 key 本身会报错 |
 | `retry.retry_on_ambiguous` | 是否重试“结果不确定”的失败（已发出请求后超时、500、504 以及 502 / 503 以外的其他 5xx），默认 `false`：可能重复扣费 |
 
-与原型的区别：没有 `listen`（改为 `server`）、没有 `api_keys`（鉴权在 2.2）、上游没有额外请求头（`headers`）、key 只能从环境变量读取。
+与原型的区别：没有 `listen`（改为 `server`）、没有 `api_keys`（改为只保存哈希的 `keys`）、上游没有额外请求头（`headers`）、key 只能从环境变量读取。
 
 ## 运行
 
@@ -71,7 +72,32 @@ export OPENAI_API_KEY=sk-...  MINIMAX_API_KEY=...  MIMO_API_KEY=tp-...
 
 Ctrl-C 或 SIGTERM 停止（进行中的请求会被中断；优雅退出在 3.3）。退出码：0 正常停止，1 配置错误或启动失败，2 参数错误或配置文件读不了。
 
-**没有鉴权时的保护：** 网关持有上游 key，却还不检查客户端是谁。数据面监听的不是本机地址（`127.x.x.x`、`::1`、`localhost`）时，`serve` 会**拒绝启动**并说明原因。确认只有可信的客户端能访问这个端口（比如容器只映射到宿主机的 `127.0.0.1`、或者在防火墙后面）时，加 `--allow-unauthenticated`。
+**没有鉴权时的保护：** 网关持有上游 key。没有启用 `auth` 插件、数据面又监听非本机地址（不是 `127.x.x.x`、`::1`、`localhost`）时，`serve` 会**拒绝启动**并说明原因。启用鉴权（下一节）；或者确认只有可信的客户端能访问这个端口（比如容器只映射到宿主机的 `127.0.0.1`、或者在防火墙后面）时，加 `--allow-unauthenticated`。
+
+## 鉴权
+
+```bash
+./build/src/app/llmgw keygen --id app-chatbot
+# 网关 key（只显示这一次，网关不保存它，请交给使用方并妥善保管）：
+# sk-gw-u3l0dU3t2SwCSZzP8SbBsKBfw3we-LK9HASaOOnjxm0
+# 把下面这一项加入配置的 keys（并确认 pipeline 中有 "auth"）：
+#   { "id": "app-chatbot", "hash": "sha256:fb5d1384…" }
+```
+
+配置中加上 `"pipeline": ["auth"]` 和上面的 `keys` 项，重启网关。客户端带上 `Authorization: Bearer <网关 key>`（OpenAI SDK 的 `api_key` 参数就是它）：
+
+| 情况 | 响应 |
+|---|---|
+| 没有 key、key 不对、不是 `Bearer` 格式 | 401 `invalid_api_key`（`WWW-Authenticate: Bearer`、`x-should-retry: false`） |
+| 同一个客户端地址 1 分钟内失败超过 20 次（IPv6 按 /64，`failures_per_minute` 可调；每个 Worker 各自计数，所以实际上限是 Worker 数 × 20） | 之后的失败返回 429（带 `Retry-After`）；**有效的 key 不受影响** |
+| key 有效 | 放行；日志和用量中只出现 `id` |
+
+- key 只输出到标准输出，说明输出到标准错误：`llmgw keygen --id x > key.txt` 可以直接存进文件
+- 网关只保存哈希（SHA-256；key 是 256 位随机数，所以不需要慢哈希）。客户端的 key **不会转发给上游**
+- 更换 key：新 key 的哈希加入 `keys` → 重启 → 应用切换 → 删除旧的那一项 → 重启（热加载在 3.1）
+- `/v1/models` 也需要 key
+- 多个 `Authorization` 头当作没有 key（前面的代理可能取的是另一个）
+- 已知限制：请求体在鉴权之前就被读完、解析出 `model`（最多 `max_body_bytes`），没有 key 的请求也要付出这部分开销
 
 ## 调用
 
