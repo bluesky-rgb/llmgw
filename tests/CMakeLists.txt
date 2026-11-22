@@ -14,10 +14,16 @@ add_executable(llmgw_unit_tests
   unit/config/syntax_test.cpp
   unit/config/json_reader_test.cpp
   unit/config/loader_test.cpp
-  unit/server/http_util_test.cpp)
-target_link_libraries(llmgw_unit_tests PRIVATE GTest::gtest_main llmgw::core llmgw::config llmgw::server)
+  unit/server/http_util_test.cpp
+  unit/stream/sse_parser_test.cpp
+  unit/stream/inspect_test.cpp
+  unit/stream/stream_test.cpp
+  unit/stream/review_test.cpp)
+target_link_libraries(llmgw_unit_tests PRIVATE GTest::gtest_main llmgw::core llmgw::config llmgw::server
+                      llmgw::stream)
 # 单元测试可以测试模块内部的组件（比如 config 的 json_reader.h），所以能看到 src/<模块>/ 下的私有头文件
-target_include_directories(llmgw_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/config" "${CMAKE_SOURCE_DIR}/src/server")
+target_include_directories(llmgw_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/config" "${CMAKE_SOURCE_DIR}/src/server"
+                           "${CMAKE_SOURCE_DIR}/src/stream")
 llmgw_fetch_dependency(nlohmann_json)
 target_include_directories(llmgw_unit_tests SYSTEM PRIVATE "${nlohmann_json_SOURCE_DIR}/single_include")
 target_compile_definitions(llmgw_unit_tests PRIVATE LLMGW_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
