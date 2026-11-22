@@ -13,3 +13,5 @@ config.json
 /llmgw.*.json
 .env
 .env.*
+__pycache__/
+*.pyc

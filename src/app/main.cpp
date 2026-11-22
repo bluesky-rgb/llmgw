@@ -1,4 +1,5 @@
-// llmgw 命令行入口：check（任务 1.1）、serve（任务 1.7）；status、reload 等在 3.4 中加入。
+// llmgw 命令行入口：check（任务 1.1）、serve（任务 1.7）、plugins（任务 2.1）；status、reload
+// 等在 3.4 中加入。
 #include <cstdio>
 #include <string>
 #include <string_view>
@@ -6,6 +7,7 @@
 
 #include "llmgw/config/loader.h"
 #include "llmgw/core/version.h"
+#include "plugins.h"
 #include "serve.h"
 
 namespace {
@@ -22,6 +24,7 @@ void print_usage() {
       "停止）。还没有客户端鉴权：\n"
       "                                           监听非本机地址时需要 --allow-unauthenticated\n"
       "  llmgw check [-c 配置文件] [--skip-env]   校验配置文件\n"
+      "  llmgw plugins                           列出可以在 pipeline 中启用的中间件插件\n"
       "  llmgw version                           显示版本\n"
       "\n"
       "check 的退出码：0 配置有效（可能有警告），1 配置有错误，2 参数错误或文件读不了\n"
@@ -44,7 +47,7 @@ int check(const std::vector<std::string_view>& args) {
     }
   }
 
-  const auto report = llmgw::config::load_file(path, options);
+  const auto report = llmgw::app::load_config(path, options, *llmgw::app::builtin_registry());
   const bool unreadable =
       !report.ok() && report.issues.size() == 1 && report.issues[0].path == path;
   if (report.ok()) {
@@ -74,6 +77,9 @@ int main(int argc, char** argv) {
   }
   if (args[0] == "check") return check({args.begin() + 1, args.end()});
   if (args[0] == "serve") return llmgw::app::serve({args.begin() + 1, args.end()});
+  if (args[0] == "plugins" && args.size() == 1) {
+    return llmgw::app::list_plugins(*llmgw::app::builtin_registry());
+  }
   if (args[0] == "version" || args[0] == "--version") {
     std::printf("llmgw %.*s\n", static_cast<int>(llmgw::core::kVersion.size()),
                 llmgw::core::kVersion.data());

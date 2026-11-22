@@ -14,6 +14,7 @@
 | 请求改写：替换模型名、`drop_fields`、`rename_fields`、`set_fields` | ✅ 1.6 |
 | 流式响应自动要求返回用量（客户端没要求时再去掉，客户端看到的与直连相同）；MiniMax 业务错误码映射 | ✅ 1.5、1.6 |
 | 背压（客户端读得慢时不再从上游拉取）、客户端断开时立即取消上游请求 | ✅ 1.3 |
+| 中间件链（`pipeline`）与插件注册表；`llmgw plugins` | ✅ 2.1（还没有内置插件） |
 | 客户端鉴权（网关 key） | ⏳ 2.2（v0.3） |
 | 限流、费用核算与预算 | ⏳ 2.3、2.4 |
 | 熔断、重试预算 | ⏳ 2.5 |
@@ -56,6 +57,7 @@ export OPENAI_API_KEY=sk-...  MINIMAX_API_KEY=...  MIMO_API_KEY=tp-...
 | `providers[]` | `name`、`base_url`（带 `/v1`）、`api_key_env`、`max_connections`、`error_mapping`、`ca_file` |
 | `proxy.https` | `"env"` 表示读取 `HTTPS_PROXY` / `NO_PROXY`；`proxy.per_provider` 可以按上游设置代理或 `"direct"` |
 | `models[].targets[]` | 按顺序尝试：`provider`、`model`（上游的模型名），以及 `drop_fields`、`rename_fields`、`set_fields`、`timeouts` |
+| `pipeline` | 按顺序启用的中间件插件：`["auth", {"name": "ratelimit", "config": {...}}]`。插件名拼错时启动失败并列出可用的插件（`llmgw plugins`）。v0.2 还没有内置插件 |
 | `retry.retry_on_ambiguous` | 是否重试“结果不确定”的失败（已发出请求后超时、500、504 以及 502 / 503 以外的其他 5xx），默认 `false`：可能重复扣费 |
 
 与原型的区别：没有 `listen`（改为 `server`）、没有 `api_keys`（鉴权在 2.2）、上游没有额外请求头（`headers`）、key 只能从环境变量读取。

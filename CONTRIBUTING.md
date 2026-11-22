@@ -52,7 +52,7 @@ CI 的 `architecture` 任务会运行下面这些检查，提交前请在本地�
 
 ```bash
 # 格式
-clang-format-18 --dry-run --Werror $(find src tests/unit tests/integration tests/fuzz -name '*.cpp' -o -name '*.h' -o -name '*.hpp')
+clang-format-18 --dry-run --Werror $(find src tests/unit tests/integration tests/fuzz tests/common -name '*.cpp' -o -name '*.h' -o -name '*.hpp')
 # 模块依赖规则（tools/module_deps.json）
 python3 tools/check_deps.py
 # TODO 的格式（必须关联 Issue）

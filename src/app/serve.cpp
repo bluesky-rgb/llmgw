@@ -12,6 +12,7 @@
 #include "llmgw/config/loader.h"
 #include "llmgw/server/server.h"
 #include "llmgw/upstream/client.h"
+#include "plugins.h"
 
 namespace llmgw::app {
 namespace {
@@ -71,7 +72,8 @@ bool allowed_to_listen(const config::Snapshot& snapshot, bool allow_unauthentica
 
 // 启动 Server，等到 SIGINT / SIGTERM 再停止
 int run(const std::shared_ptr<const config::Snapshot>& snapshot,
-        const std::shared_ptr<const upstream::TlsContexts>& tls) {
+        const std::shared_ptr<const upstream::TlsContexts>& tls,
+        const std::shared_ptr<const middleware::Registry>& registry) {
   // 必须在创建任何线程之前：扩容 fd 表；屏蔽 SIGINT / SIGTERM（新线程继承信号掩码，
   // 信号只由下面的 sigwait 接收，不会打断 Worker 线程）
   server::pregrow_fd_table();
@@ -88,6 +90,7 @@ int run(const std::shared_ptr<const config::Snapshot>& snapshot,
       .config = snapshot,
       .dispatcher_factory = make_dispatcher_factory(snapshot, tls),
       .metrics_factory = {},
+      .chain_factory = make_chain_factory(snapshot, registry),
   });
   if (auto r = server.start(); !r) {
     std::fprintf(stderr, "启动失败：%s\n", r.error().message.c_str());
@@ -115,7 +118,8 @@ int run(const std::shared_ptr<const config::Snapshot>& snapshot,
 int serve(const std::vector<std::string_view>& args) {
   const auto parsed = parse_args(args);
   if (!parsed) return kUsageError;
-  const auto report = config::load_file(parsed->path, config::LoadOptions{});
+  const auto registry = builtin_registry();
+  const auto report = load_config(parsed->path, config::LoadOptions{}, *registry);
   if (!report.ok()) {
     const bool unreadable = report.issues.size() == 1 && report.issues[0].path == parsed->path;
     std::fprintf(stderr, "%s：配置有错误，没有启动\n", parsed->path.c_str());
@@ -129,7 +133,7 @@ int serve(const std::vector<std::string_view>& args) {
     std::fprintf(stderr, "TLS 初始化失败：%s\n", tls.error().message.c_str());
     return kStartError;
   }
-  return run(report.snapshot, *tls);
+  return run(report.snapshot, *tls, registry);
 }
 
 }  // namespace llmgw::app

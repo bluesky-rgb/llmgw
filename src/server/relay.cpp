@@ -1,7 +1,8 @@
 // /v1/chat/completions：竞速 + 拉取循环（ADR-006 结论 1、2）。
 //
 //   handle_chat:  relay ‖ 客户端断开 ‖ 总截止时间     （每个请求一次）
-//   relay:        dispatch() → (respond ‖ 看门狗)      （拿到 dispatch 的结果之后一次）
+//                 → 竞速结束之后：中间件的 on_complete（限时，不会被客户端断开取消；任务 2.1）
+//   relay:        中间件的 on_request → dispatch() → (respond ‖ 看门狗)
 //   respond:      写错误响应；或者写响应头 → 拉取循环
 //
 // 看门狗是惰性定时器，按当前所处的阶段分别计时（独立审查发现两者原来混在一起）：
@@ -29,9 +30,12 @@ namespace llmgw::server::detail {
 struct Session::Exchange {
   enum class Phase : std::uint8_t { kOther, kWaitingUpstream, kWritingClient };
   RequestContext* ctx = nullptr;
+  middleware::Chain::Run* run =
+      nullptr;  ///< 中间件链上的进度（与 ctx 一样在 handle_chat 的栈帧中）
   unsigned version = 11;
   bool keep_alive = true;
   bool headers_sent = false;  ///< 开始写响应之后，出错只能断开连接，不能再改状态码
+  bool rejected_by_plugin = false;  ///< 中间件拒绝了请求（终态一律是 kRejected，不看状态码）
   Phase phase = Phase::kOther;
   SteadyClock::time_point phase_since;
 
@@ -71,7 +75,9 @@ Task<bool> Session::handle_chat(Request request, std::string request_id) {
                                  .received_at = now,
                                  .deadline = now + worker_->config->timeouts.total},
                      worker_->config);
+  middleware::Chain::Run run;
   Exchange ex{.ctx = &ctx,
+              .run = &run,
               .version = request.version(),
               .keep_alive = keep_alive,
               .headers_sent = false,
@@ -81,12 +87,14 @@ Task<bool> Session::handle_chat(Request request, std::string request_id) {
   asio::steady_timer deadline(socket_.get_executor());
   deadline.expires_at(ctx.request.deadline);
   auto r = co_await (relay(&ex) || client_closed(&socket_) || timer_fired(&deadline));
+  bool reuse = false;
   switch (r.index()) {
     case 0:
-      co_return std::get<0>(r);
+      reuse = std::get<0>(r);
+      break;
     case 1:  // 客户端走了：dispatch 或拉取已被取消，上游请求随之结束
       set_outcome(&ctx, OutcomeKind::kClientAborted, ctx.outcome.http_status);
-      co_return false;
+      break;
     default: {  // 总超时
       Error err =
           make_error(ErrorCode::kUpstreamTimeout,
@@ -94,23 +102,60 @@ Task<bool> Session::handle_chat(Request request, std::string request_id) {
                          " 秒。上游可能已经开始生成并计费，请不要自动重试");
       if (!ex.headers_sent) {
         set_outcome(&ctx, OutcomeKind::kTimeout, 504, ErrorCode::kUpstreamTimeout);
-        co_await write_error(std::move(err), ctx.request.request_id, false, ex.version);
+        co_await write_error(std::move(err), ctx.request.request_id, false, ex.version,
+                             run.response_headers);
       } else {
         set_outcome(&ctx, OutcomeKind::kTimeout, ctx.outcome.http_status,
                     ErrorCode::kUpstreamTimeout);
         co_await try_end_with_error_event(&ex, std::move(err));
       }
-      co_return false;
+      break;
     }
   }
+  // 无论竞速怎样结束，都要执行 on_complete（ctx.outcome 此时是终态）。没有中间件时连协程都不调用
+  // （热路径上不多分配一个协程帧）
+  bool completed = true;
+  if (worker_->chain != nullptr && run.entered > 0) completed = co_await finish_chain(&ex);
+  const bool keep_connection = reuse && completed;
+  co_return keep_connection;
+}
+
+Task<bool> Session::finish_chain(Exchange* ex) {
+  middleware::Chain* chain = worker_->chain;
+  if (chain == nullptr || ex->run->entered == 0) co_return true;  // 没有中间件：不建定时器
+  asio::steady_timer timer(socket_.get_executor());
+  timer.expires_after(worker_->complete_timeout);
+  // Chain::on_complete 捕获插件的全部异常，不会抛出（竞速的分支不能抛异常）
+  auto r = co_await (chain->on_complete(ex->ctx, ex->run) || timer_fired(&timer));
+  if (r.index() == 0) co_return true;
+  const middleware::Chain::Run& run = *ex->run;
+  const bool skipped = run.completed < run.entered;  // 有插件没有执行 on_complete
+  const std::string plugin = run.cut_off ? chain->name(*run.cut_off) : std::string("unknown");
+  std::fprintf(stderr,
+               "[server] request %s: plugin %s on_complete did not finish within %lld ms%s\n",
+               ex->ctx->request.request_id.c_str(), plugin.c_str(),
+               static_cast<long long>(worker_->complete_timeout.count()),
+               skipped ? "; skipped the remaining plugins and closed the connection" : "");
+  worker_->metrics->increment(Counter::kMiddlewareErrors, {plugin, "complete_timeout"});
+  co_return !skipped;
 }
 
 Task<bool> Session::relay(Exchange* ex) {
   RequestContext* ctx = ex->ctx;
   Result<std::unique_ptr<ResponseStream>> dispatched = fail(ErrorCode::kInternal, "网关内部错误");
   std::string thrown;  // catch 中不能 co_await：先记下来，之后再判断是不是因为被取消
+  bool rejected = false;
   try {
-    dispatched = co_await worker_->dispatcher->dispatch(ctx);
+    // 中间件（任务 2.1）：拒绝时不调用 dispatch，直接返回插件给出的错误。Chain 捕获插件的异常
+    if (middleware::Chain* chain = worker_->chain; chain != nullptr) {
+      middleware::Decision decision = co_await chain->on_request(ctx, ex->run);
+      if (decision.reject) {
+        dispatched = fail(std::move(*decision.reject));
+        rejected = true;
+        ex->rejected_by_plugin = !ex->run->failed;  // 插件抛异常：是故障（kFailed），不是拒绝
+      }
+    }
+    if (!rejected) dispatched = co_await worker_->dispatcher->dispatch(ctx);
   } catch (const std::exception& e) {
     thrown = e.what();  // Dispatcher 的异常只影响这一个请求（异常隔离）
   }
@@ -145,12 +190,14 @@ Task<bool> Session::respond(Exchange* ex, Result<std::unique_ptr<ResponseStream>
     if (!dispatched) {
       const Error& err = dispatched.error();
       const int status = http_status(err.code);
-      set_outcome(ctx, status < 500 ? OutcomeKind::kRejected : OutcomeKind::kFailed, status,
-                  err.code);
+      // 中间件拒绝的（包括 503 等 5xx）是 kRejected；网关自己的 4xx（模型不存在等）也是：请求本身
+      // 没有被处理。5xx 是故障
+      const bool rejected = ex->rejected_by_plugin || status < 500;
+      set_outcome(ctx, rejected ? OutcomeKind::kRejected : OutcomeKind::kFailed, status, err.code);
       ex->headers_sent = true;  // 开始写响应之后，总超时不能再写 504（否则两份响应会混在一起）
       ex->enter(Exchange::Phase::kWritingClient);
-      const bool ok =
-          co_await write_error(err, ctx->request.request_id, ex->keep_alive, ex->version);
+      const bool ok = co_await write_error(err, ctx->request.request_id, ex->keep_alive,
+                                           ex->version, ex->run->response_headers);
       ex->enter(Exchange::Phase::kOther);
       co_return ok && ex->keep_alive;
     }
@@ -183,7 +230,7 @@ Task<bool> Session::respond(Exchange* ex, Result<std::unique_ptr<ResponseStream>
     set_outcome(ctx, OutcomeKind::kFailed, 500, ErrorCode::kInternal);
     ex->headers_sent = true;
     co_await write_error(make_error(ErrorCode::kInternal, "网关内部错误"), ctx->request.request_id,
-                         false, ex->version);
+                         false, ex->version, ex->run->response_headers);
   } else if (crashed) {
     set_outcome(ctx, OutcomeKind::kFailed, ctx->outcome.http_status, ErrorCode::kInternal);
   }
@@ -312,6 +359,15 @@ Task<bool> Session::write_head(Exchange* ex, const ResponseHead* head) {
       continue;
     }
     res.insert(h.name, h.value);
+  }
+  // 中间件附加的响应头：替换上游的同名响应头（比如两边都有 x-ratelimit-remaining
+  // 时，以网关的为准）。
+  // 先删掉上游的同名头，再逐个插入：同一个名字可以出现多次（Link、Server-Timing …）
+  for (const Header& h : ex->run->response_headers) {
+    if (plugin_header_allowed(h.name, h.value)) res.erase(h.name);
+  }
+  for (const Header& h : ex->run->response_headers) {
+    if (plugin_header_allowed(h.name, h.value)) res.insert(h.name, h.value);
   }
   res.set("X-Request-Id", ex->ctx->request.request_id);
   res.keep_alive(ex->keep_alive);

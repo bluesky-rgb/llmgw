@@ -243,7 +243,9 @@ TEST(ServerStart, reports_which_port_is_taken) {
                                return std::make_unique<FakeDispatcher>(w,
                                                                        std::make_shared<Probe>());
                              },
-                         .metrics_factory = {}});
+                         .metrics_factory = {},
+                         .chain_factory = {},
+                         .middleware_complete_timeout = std::chrono::milliseconds(5000)});
   auto r = s.start();
   ASSERT_FALSE(r);
   EXPECT_NE(r.error().message.find("观测面"), std::string::npos) << r.error().message;

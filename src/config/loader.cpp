@@ -52,6 +52,46 @@ void read_array(ObjectReader& top, std::string_view key, std::vector<T>* out, F&
   }
 }
 
+// pipeline：每一项是插件名（字符串），或者 {"name": ..., "config": {...}}（任务 2.1）
+void read_pipeline(ObjectReader& top, std::vector<PipelineEntry>* out) {
+  const Json* arr = top.array("pipeline");
+  if (arr == nullptr) return;
+  for (std::size_t i = 0; i < arr->size(); ++i) {
+    const Json& item = (*arr)[i];
+    PipelineEntry entry{.name = {}, .config_json = "{}", .path = index_path("pipeline", i)};
+    if (item.is_string()) {
+      entry.name = item.get<std::string>();
+    } else if (item.is_object()) {
+      ObjectReader r(item, entry.path, top.diag());
+      entry.name = r.string("name", true).value_or("");
+      // 内容由插件校验；这里只要求它是对象
+      if (r.object("config")) entry.config_json = r.raw("config")->dump();
+      r.finish();
+    } else {
+      top.diag()->error(entry.path,
+                        "应该是插件名（字符串）或者 {\"name\": ..., \"config\": {...}}，实际是" +
+                            detail::type_name(item));
+      continue;
+    }
+    if (entry.name.empty()) {
+      // 对象形式缺少 name 时 finish() 已经报告；写了但是空字符串时在这里报告
+      if (item.is_string()) {
+        top.diag()->error(entry.path, "插件名不能为空");
+      } else if (const auto it = item.find("name"); it != item.end() && it->is_string()) {
+        top.diag()->error(entry.path + ".name", "插件名不能为空");
+      }
+      continue;
+    }
+    // 同一个插件出现两次：执行顺序和计数（限流、并发）都会有歧义
+    const auto same = std::ranges::find(*out, entry.name, &PipelineEntry::name);
+    if (same != out->end()) {
+      top.diag()->error(entry.path, "插件 \"" + entry.name + "\" 与 " + same->path + " 重复");
+      continue;
+    }
+    out->push_back(std::move(entry));
+  }
+}
+
 // 名字唯一
 template <class T>
 void check_unique(const std::vector<T>& items, const char* section, const char* what,
@@ -214,6 +254,7 @@ LoadReport parse(std::string_view json_text, const LoadOptions& options) {
     const Timeouts global = snapshot->timeouts;
     read_array(top, "models", &snapshot->models,
                [&](ObjectReader r) { return detail::read_model(std::move(r), global); });
+    read_pipeline(top, &snapshot->pipeline);
     top.unsupported("keys", "将在 v0.3 提供，任务 2.2", "目前网关不做鉴权，请只在可信网络中使用");
     top.unsupported("pricing", "将在 v0.3 提供，任务 2.4");
     top.unsupported("accounting", "将在 v0.3 提供，任务 2.4");

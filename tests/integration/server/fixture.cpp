@@ -97,6 +97,14 @@ Task<Result<std::unique_ptr<ResponseStream>>> FakeDispatcher::dispatch(RequestCo
     head.headers.push_back({"x-bad name", "v"});
     co_return make(sse(1), std::chrono::milliseconds(0), End::kOk);
   }
+  if (m.starts_with("status:")) {  // 上游原样返回的状态码（ADR-002）
+    head.status = std::stoi(m.substr(7));
+    co_return make(sse(1), std::chrono::milliseconds(0), End::kOk);
+  }
+  if (m == "upstream_ratelimit") {
+    head.headers.push_back({"x-ratelimit-remaining", "99"});
+    co_return make(sse(1), std::chrono::milliseconds(0), End::kOk);
+  }
   if (m == "medium") co_return make(sse(5), std::chrono::milliseconds(50), End::kOk);
   if (m == "nextthrow") co_return make(sse(1), std::chrono::milliseconds(0), End::kThrow);
   if (m == "badstatus") {
@@ -142,14 +150,17 @@ std::shared_ptr<config::Snapshot> test_config() {
   return cfg;
 }
 
-void ServerTest::start(std::shared_ptr<config::Snapshot> cfg) {
+void ServerTest::start(std::shared_ptr<config::Snapshot> cfg, ChainFactory chain,
+                       std::chrono::milliseconds complete_timeout, MetricsFactory metrics) {
   server_.reset();
   auto probe = probe_;
   server_ = std::make_unique<Server>(ServerOptions{
       .config = std::move(cfg),
       .dispatcher_factory =
           [probe](const WorkerInfo& w) { return std::make_unique<FakeDispatcher>(w, probe); },
-      .metrics_factory = {}});
+      .metrics_factory = std::move(metrics),
+      .chain_factory = std::move(chain),
+      .middleware_complete_timeout = complete_timeout});
   auto r = server_->start();
   ASSERT_TRUE(r) << r.error().message;
 }

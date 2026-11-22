@@ -194,7 +194,8 @@ Task<bool> Session::handle(Request request) {
 }
 
 Task<bool> Session::write_json(unsigned status, std::string body, std::string request_id,
-                               bool keep_alive, unsigned version, std::optional<Error> error) {
+                               bool keep_alive, unsigned version, std::optional<Error> error,
+                               std::vector<Header> extra) {
   http::response<http::string_body> res{static_cast<http::status>(status), version};
   res.set(http::field::content_type, "application/json");
   res.set("X-Request-Id", request_id);
@@ -208,6 +209,9 @@ Task<bool> Session::write_json(unsigned status, std::string body, std::string re
       res.set(http::field::allow, "POST, GET");
     }
   }
+  for (const Header& h : extra) {  // 网关自己的头都不允许被插件替换，所以直接插入
+    if (plugin_header_allowed(h.name, h.value)) res.insert(h.name, h.value);
+  }
   res.keep_alive(keep_alive);
   res.body() = std::move(body);
   res.prepare_payload();
@@ -219,11 +223,11 @@ Task<bool> Session::write_json(unsigned status, std::string body, std::string re
 }
 
 Task<bool> Session::write_error(Error error, std::string request_id, bool keep_alive,
-                                unsigned version) {
+                                unsigned version, std::vector<Header> extra) {
   const auto status = static_cast<unsigned>(http_status(error.code));
   std::string body = error_body(error);
   co_return co_await write_json(status, std::move(body), std::move(request_id), keep_alive, version,
-                                std::move(error));
+                                std::move(error), std::move(extra));
 }
 
 Task<> Session::reject_and_close(Error error, std::string reason_label, std::string request_id,

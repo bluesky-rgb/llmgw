@@ -15,6 +15,7 @@ add_executable(llmgw_unit_tests
   unit/config/syntax_test.cpp
   unit/config/json_reader_test.cpp
   unit/config/loader_test.cpp
+  unit/config/pipeline_test.cpp
   unit/server/http_util_test.cpp
   unit/stream/sse_parser_test.cpp
   unit/stream/inspect_test.cpp
@@ -22,10 +23,11 @@ add_executable(llmgw_unit_tests
   unit/stream/review_test.cpp
   unit/provider/rewrite_test.cpp
   unit/router/router_test.cpp
+  unit/middleware/chain_test.cpp
   unit/executor/classify_test.cpp
   unit/stream/provider_samples_test.cpp)
 target_link_libraries(llmgw_unit_tests PRIVATE GTest::gtest_main llmgw::core llmgw::config llmgw::server
-                      llmgw::stream llmgw::provider llmgw::router llmgw::executor)
+                      llmgw::stream llmgw::provider llmgw::router llmgw::executor llmgw::middleware)
 # 单元测试可以测试模块内部的组件（比如 config 的 json_reader.h），所以能看到 src/<模块>/ 下的私有头文件
 target_include_directories(llmgw_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/config" "${CMAKE_SOURCE_DIR}/src/server"
                            "${CMAKE_SOURCE_DIR}/src/stream" "${CMAKE_SOURCE_DIR}/src/provider"
@@ -65,6 +67,13 @@ llmgw_cli_test(check_bad_config_exits_1 ARGS "check|-c|${bad}|--skip-env" EXPECT
 llmgw_cli_test(check_missing_file_exits_2 ARGS "check|-c|/nonexistent/llmgw.json" EXPECT 2
                REQUIRE "/nonexistent/llmgw.json")
 llmgw_cli_test(unknown_argument_exits_2 ARGS "check|--bogus" EXPECT 2 REQUIRE "未知参数")
+# pipeline 中的插件名不存在（任务 2.1 M6）：check 和 serve 都拒绝，并说明可用的插件
+set(unknown_plugin ${CMAKE_CURRENT_SOURCE_DIR}/cli/unknown_plugin.json)
+llmgw_cli_test(check_unknown_plugin_exits_1 ARGS "check|-c|${unknown_plugin}|--skip-env" EXPECT 1
+               REQUIRE "unknown_plugin.json：1 个错误.*pipeline\\[0\\]：没有名为 \"auth\" 的插件")
+llmgw_cli_test(serve_unknown_plugin_exits_1 ARGS "serve|-c|${unknown_plugin}" EXPECT 1
+               REQUIRE "没有名为 \"auth\" 的插件" ENV "OPENAI_API_KEY=x")
+llmgw_cli_test(plugins_lists_registry ARGS "plugins" EXPECT 0 REQUIRE "插件")
 # 密钥不能出现在 check 的任何输出中（配置有错误时也一样）
 llmgw_cli_test(check_never_prints_api_key ARGS "check|-c|${bad}" EXPECT 1 REQUIRE "bad.json"
                FORBID "sk-VERY-SECRET" ENV "OPENAI_API_KEY=sk-VERY-SECRET-1;MINIMAX_API_KEY=sk-VERY-SECRET-2")
@@ -97,7 +106,8 @@ add_executable(llmgw_integration_tests
   integration/server/basic_test.cpp
   integration/server/limits_test.cpp
   integration/server/security_test.cpp
-  integration/server/review_test.cpp)
+  integration/server/review_test.cpp
+  integration/server/middleware_test.cpp)
 target_link_libraries(llmgw_integration_tests PRIVATE GTest::gtest_main llmgw::server Boost::beast)
 target_compile_options(llmgw_integration_tests PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>

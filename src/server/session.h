@@ -15,6 +15,7 @@
 #include "llmgw/config/snapshot.h"
 #include "llmgw/core/error.h"
 #include "llmgw/core/metrics.h"
+#include "llmgw/middleware/chain.h"
 #include "llmgw/server/dispatcher.h"
 
 namespace llmgw::server::detail {
@@ -30,6 +31,8 @@ struct WorkerContext {
   unsigned index = 0;
   std::shared_ptr<const config::Snapshot> config;
   Dispatcher* dispatcher = nullptr;
+  middleware::Chain* chain = nullptr;                ///< 为空表示没有中间件
+  std::chrono::milliseconds complete_timeout{5000};  ///< 整个 on_complete 阶段的时限
   MetricsRecorder* metrics = nullptr;
   SharedState* shared = nullptr;
   std::mt19937_64 rng;  ///< 生成请求 ID；只在本 Worker 的线程上使用
@@ -87,6 +90,10 @@ class Session {
   // 竞速的分支绝不能抛异常：a || b 是 wait_for_one_success，抛异常的分支不会结束竞速，
   // 而是被悄悄吞掉、一直等到别的分支“成功”（独立审查发现）。所以 relay、pump 内部捕获全部异常。
   Task<bool> relay(Exchange* ex);
+  /// 请求结束后执行中间件链的 on_complete（不在竞速中，客户端断开不会取消它），限时
+  /// complete_timeout。 返回 false 表示超时了（插件卡住），连接要关闭
+  Task<bool> finish_chain(Exchange* ex);
+
   Task<bool> respond(Exchange* ex, Result<std::unique_ptr<ResponseStream>> dispatched);
   Task<PumpResult> pump(Exchange* ex, ResponseStream* stream);
   // 取下一块数据；ResponseStream 抛出的异常转换成错误（按上游中途出错处理）
@@ -103,9 +110,12 @@ class Session {
   /// 写一个完整的响应（JSON），返回是否写成功。
   // 协程参数一律按值传递（code-architecture.md 3.4）。每次写都与 write_timeout 竞速：
   // 客户端不读时不能永远占住连接名额（独立审查发现的严重问题）
+  /// extra：中间件附加的响应头（不允许的会被丢弃，见 plugin_header_allowed）
   Task<bool> write_json(unsigned status, std::string body, std::string request_id, bool keep_alive,
-                        unsigned version, std::optional<Error> error = std::nullopt);
-  Task<bool> write_error(Error error, std::string request_id, bool keep_alive, unsigned version);
+                        unsigned version, std::optional<Error> error = std::nullopt,
+                        std::vector<Header> extra = {});
+  Task<bool> write_error(Error error, std::string request_id, bool keep_alive, unsigned version,
+                         std::vector<Header> extra = {});
   /// 回复错误后关闭连接：先关闭写方向，再丢弃对方还在发送的数据一小段时间，
   /// 避免直接关闭导致内核发送 RST、客户端收不到我们的回复（比如 413 时对方还在上传请求体）。
   /// request_id、version：请求头已经解析出来时沿用客户端的请求 ID 和 HTTP 版本
