@@ -82,6 +82,10 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME cli.provider_probe_self_test
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/provider-probe/probe.py --self-test
                    --gateway $<TARGET_FILE:llmgw_app>)
+  # 发布物中的第三方许可证覆盖所有编进程序的依赖（任务 1.10 的遗漏，2.1 前发现）
+  add_test(NAME tools.third_party_licenses
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/cli/third_party_licenses_test.py
+                   ${CMAKE_BINARY_DIR})
   # 假上游在 127.0.0.1 上：不能经过开发环境中的代理
   set_tests_properties(cli.provider_probe_self_test PROPERTIES TIMEOUT 180
                        ENVIRONMENT "HTTPS_PROXY=;https_proxy=;HTTP_PROXY=;http_proxy=")

@@ -12,7 +12,7 @@
       "repo": "https://github.com/nlohmann/json.git",
       "tag": "v3.12.0",
       "license": "MIT",
-      "used_by": "prototype",
+      "used_by": "config（读取配置文件）、server（错误响应体、模型列表）、测试、prototype",
       "header_only": true
     },
     "cpp_httplib": {
