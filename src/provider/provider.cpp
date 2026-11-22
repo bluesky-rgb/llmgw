@@ -47,7 +47,9 @@ class BodySource final : public stream::Source {
   BodySource(std::unique_ptr<upstream::Body> body, std::shared_ptr<SourceState> state)
       : body_(std::move(body)), state_(std::move(state)) {}
   Task<Result<bool>> read(std::string* out) override {
-    upstream::Outcome<bool> r = co_await read_once(out);
+    // 预读结束之后直接读（不经过 read_once）：每次读取少一层协程帧（任务 1.9 压测）
+    upstream::Outcome<bool> r =
+        state_->prefetch_idle ? co_await read_once(out) : co_await body_->read(out);
     if (!r) {
       state_->last_error = r.error();
       co_return fail(r.error().to_error());
@@ -124,8 +126,9 @@ Result<Prepared> prepare(const RequestInfo& request, const config::Provider& pro
 }
 
 std::vector<Header> filter_response_headers(const std::vector<Header>& upstream_headers) {
-  static constexpr std::array<std::string_view, 4> kKeep{"content-type", "cache-control",
-                                                         "retry-after", "retry-after-ms"};
+  // x-should-retry：上游自己的重试提示（任务 1.9）；executor 在结果不确定时会改成 false
+  static constexpr std::array<std::string_view, 5> kKeep{
+      "content-type", "cache-control", "retry-after", "retry-after-ms", "x-should-retry"};
   std::vector<Header> out;
   bool request_id = false;
   for (const auto& h : upstream_headers) {

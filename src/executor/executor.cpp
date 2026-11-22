@@ -2,6 +2,7 @@
 #include "llmgw/executor/executor.h"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <optional>
@@ -18,16 +19,31 @@ namespace {
 using detail::Next;
 using Returned = Result<std::unique_ptr<ResponseStream>>;
 
+bool iequals(std::string_view a, std::string_view b) {
+  return std::ranges::equal(a, b, [](char x, char y) {
+    return std::tolower(static_cast<unsigned char>(x)) ==
+           std::tolower(static_cast<unsigned char>(y));
+  });
+}
+
 // 在上游的响应头之外加上 X-LLMGW-Provider、X-LLMGW-Upstream-Model、X-LLMGW-Attempts
 // （design.md 第 5 节的客户端契约）。其余原样转发
 class AnnotatedStream final : public ResponseStream {
  public:
   AnnotatedStream(std::unique_ptr<ResponseStream> inner, const config::TargetConfig& target,
-                  std::size_t attempts)
+                  std::size_t attempts, bool no_retry)
       : inner_(std::move(inner)), head_(inner_->head()) {
     head_.headers.push_back({"X-LLMGW-Provider", target.provider});
     head_.headers.push_back({"X-LLMGW-Upstream-Model", target.model});
     head_.headers.push_back({"X-LLMGW-Attempts", std::to_string(attempts)});
+    // 原样返回的“结果不确定”的响应（500、504 等）：上游可能已经处理并扣费。OpenAI 官方 SDK 默认
+    // 会自动重试 5xx，除非响应中有 x-should-retry: false（design.md 第 5 节）。网关自己的错误已经
+    // 带这个头（server 按错误码设置），原样转发的上游响应要在这里加上（任务 1.9 发现的缺口）
+    if (no_retry) {
+      std::erase_if(head_.headers,
+                    [](const Header& h) { return iequals(h.name, "x-should-retry"); });
+      head_.headers.push_back({"x-should-retry", "false"});
+    }
   }
   [[nodiscard]] const ResponseHead& head() const override { return head_; }
   Task<Result<std::optional<Chunk>>> next() override { return inner_->next(); }
@@ -60,12 +76,7 @@ std::optional<std::chrono::seconds> retry_after(const ResponseHead& head) {
     if (ec != std::errc() || end != v.data() + v.size() || n < 0) return std::nullopt;
     return n;
   };
-  auto iequals = [](std::string_view a, std::string_view b) {
-    return std::ranges::equal(a, b, [](char x, char y) {
-      return std::tolower(static_cast<unsigned char>(x)) ==
-             std::tolower(static_cast<unsigned char>(y));
-    });
-  };
+
   constexpr std::int64_t kMaxSeconds = std::int64_t{24} * 3600;  // 不合理的值不转告客户端
   for (const auto& h : head.headers) {
     if (iequals(h.name, "retry-after")) {
@@ -200,7 +211,11 @@ Task<std::optional<Returned>> try_target(const Options* options, RequestContext*
     if (!out) co_return Returned(fail(out.error().to_error()));  // 可能已经计费：504
     ctx->upstream_idle = t.timeouts.idle;
     co_return Returned(std::unique_ptr<ResponseStream>(
-        std::make_unique<AnnotatedStream>(std::move(*out), t, tally->attempts)));
+        std::make_unique<AnnotatedStream>(std::move(*out), t, tally->attempts,
+                                          // 这一次或之前的尝试可能已经扣费，返回的又是错误：
+                                          // 不让客户端重来（独立审查 1.9 #3：比如重试过 500 之后，
+                                          // 最后返回 409，SDK 默认会重试 409）
+                                          tally->ambiguous && status >= 400)));
   }
   tally->tried.push_back(describe(v.result, status));
   if (out && detail::forward_when_exhausted(status)) {

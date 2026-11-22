@@ -2,8 +2,6 @@
 // 测试上游。 用 upstream::Client 当作 HTTP
 // 客户端访问网关。重点包括停止时的对象生命周期（独立审查 1.7 #1： Gateway 中的 Client 必须在
 // io_context 销毁之前销毁），需要在 ASan 下运行。
-#include "gateway.h"
-
 #include <algorithm>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -11,6 +9,7 @@
 #include <memory>
 
 #include "../upstream/harness.h"
+#include "gateway_harness.h"
 #include "llmgw/server/server.h"
 
 namespace llmgw::test {
@@ -39,41 +38,6 @@ std::shared_ptr<config::Snapshot> gateway_config(std::uint16_t first, std::uint1
   }
   cfg->models.push_back(m);
   return cfg;
-}
-
-struct Gateway {
-  std::unique_ptr<server::Server> server;
-  explicit Gateway(const std::shared_ptr<config::Snapshot>& cfg) {
-    auto tls = upstream::make_tls_contexts(*cfg);
-    if (!tls) throw std::runtime_error(tls.error().message);
-    server = std::make_unique<server::Server>(
-        server::ServerOptions{.config = cfg,
-                              .dispatcher_factory = app::make_dispatcher_factory(cfg, *tls),
-                              .metrics_factory = {}});
-    if (auto r = server->start(); !r) throw std::runtime_error(r.error().message);
-  }
-};
-
-// 访问网关的客户端：网关本身当作一个“上游”
-struct Caller {
-  Env env;
-  const config::Provider* gw = nullptr;
-  explicit Caller(std::uint16_t port) { gw = env.start(provider("http", "127.0.0.1", port)); }
-  Fetched chat(const std::string& body) {
-    upstream::Request req = post(body);
-    req.target = "/v1/chat/completions";
-    return env.get(gw, std::move(req), deadlines(2s, 10s));
-  }
-};
-
-std::string header(const Fetched& f, std::string_view name) {
-  for (const auto& h : f.headers) {
-    if (h.name.size() == name.size() &&
-        std::equal(h.name.begin(), h.name.end(), name.begin(),
-                   [](char x, char y) { return std::tolower(x) == std::tolower(y); }))
-      return h.value;
-  }
-  return {};
 }
 
 std::uint16_t closed_port() {

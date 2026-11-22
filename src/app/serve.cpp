@@ -4,6 +4,8 @@
 
 #include <csignal>
 #include <cstdio>
+#include <memory>
+#include <optional>
 #include <string>
 
 #include "gateway.h"
@@ -25,35 +27,51 @@ void print_issues(const config::LoadReport& report) {
   }
 }
 
-}  // namespace
-
-int serve(const std::vector<std::string_view>& args) {
+struct Args {
   std::string path = "llmgw.json";
+  bool allow_unauthenticated = false;
+};
+
+// 有值：解析成功；没有值：参数错误（已经打印）
+std::optional<Args> parse_args(const std::vector<std::string_view>& args) {
+  Args out;
   for (std::size_t i = 0; i < args.size(); ++i) {
     if ((args[i] == "-c" || args[i] == "--config") && i + 1 < args.size()) {
-      path = std::string(args[++i]);
+      out.path = std::string(args[++i]);
+    } else if (args[i] == "--allow-unauthenticated") {
+      out.allow_unauthenticated = true;
     } else {
       std::fprintf(stderr, "未知参数：%s\n", std::string(args[i]).c_str());
-      return kUsageError;
+      return std::nullopt;
     }
   }
+  return out;
+}
 
-  const auto report = config::load_file(path, config::LoadOptions{});
-  if (!report.ok()) {
-    const bool unreadable = report.issues.size() == 1 && report.issues[0].path == path;
-    std::fprintf(stderr, "%s：配置有错误，没有启动\n", path.c_str());
-    print_issues(report);
-    return unreadable ? kUsageError : kStartError;
+// 任务 1.9：客户端鉴权在 2.2 之前还没有实现。网关持有上游的 key，监听非本机地址时，任何能访问这个
+// 端口的人都能用这些 key 调用模型、产生费用。默认拒绝启动，需要显式确认。
+// 按实际要绑定的地址判断（解析之后），解析失败也当作“不是本机地址”（独立审查 1.9 #1）
+bool allowed_to_listen(const config::Snapshot& snapshot, bool allow_unauthenticated) {
+  if (server::listen_address_is_loopback(snapshot.server.host).value_or(false)) return true;
+  if (!allow_unauthenticated) {
+    std::fprintf(
+        stderr,
+        "拒绝启动：数据面监听 %s（不是本机地址），而网关还不做客户端鉴权（任务 2.2）。\n"
+        "任何能访问这个端口的人都能用配置中的上游 key 调用模型。\n"
+        "只在本机使用：把 server.host 改为 127.0.0.1；确认网络可信（比如容器网络、防火墙后面）："
+        "加 --allow-unauthenticated\n",
+        snapshot.server.host.c_str());
+    return false;
   }
-  print_issues(report);  // 只有警告
-  const std::shared_ptr<const config::Snapshot> snapshot = report.snapshot;
+  std::fprintf(stderr,
+               "警告：数据面监听 %s 且没有客户端鉴权：请确认只有可信的客户端能访问这个端口\n",
+               snapshot.server.host.c_str());
+  return true;
+}
 
-  auto tls = upstream::make_tls_contexts(*snapshot);  // 加载系统证书库约 40 ms，只做一次
-  if (!tls) {
-    std::fprintf(stderr, "TLS 初始化失败：%s\n", tls.error().message.c_str());
-    return kStartError;
-  }
-
+// 启动 Server，等到 SIGINT / SIGTERM 再停止
+int run(const std::shared_ptr<const config::Snapshot>& snapshot,
+        const std::shared_ptr<const upstream::TlsContexts>& tls) {
   // 必须在创建任何线程之前：扩容 fd 表；屏蔽 SIGINT / SIGTERM（新线程继承信号掩码，
   // 信号只由下面的 sigwait 接收，不会打断 Worker 线程）
   server::pregrow_fd_table();
@@ -68,14 +86,14 @@ int serve(const std::vector<std::string_view>& args) {
 
   server::Server server(server::ServerOptions{
       .config = snapshot,
-      .dispatcher_factory = make_dispatcher_factory(snapshot, *tls),
+      .dispatcher_factory = make_dispatcher_factory(snapshot, tls),
       .metrics_factory = {},
   });
   if (auto r = server.start(); !r) {
     std::fprintf(stderr, "启动失败：%s\n", r.error().message.c_str());
     return kStartError;
   }
-  // 测试和运维脚本从这一行读取实际的端口（配置中写 0 时由系统分配）
+  // 测试和运维脚本从这一行读取实际的端口
   std::fprintf(stderr, "llmgw 已启动：数据面 %s:%u，管理面 %s:%u，观测面 %s:%u，%u 个 Worker\n",
                snapshot->server.host.c_str(), server.data_port(),
                snapshot->server.admin.host.c_str(), server.admin_port(),
@@ -90,6 +108,28 @@ int serve(const std::vector<std::string_view>& args) {
   server.stop();
   std::fprintf(stderr, "已停止\n");
   return kOk;
+}
+
+}  // namespace
+
+int serve(const std::vector<std::string_view>& args) {
+  const auto parsed = parse_args(args);
+  if (!parsed) return kUsageError;
+  const auto report = config::load_file(parsed->path, config::LoadOptions{});
+  if (!report.ok()) {
+    const bool unreadable = report.issues.size() == 1 && report.issues[0].path == parsed->path;
+    std::fprintf(stderr, "%s：配置有错误，没有启动\n", parsed->path.c_str());
+    print_issues(report);
+    return unreadable ? kUsageError : kStartError;
+  }
+  print_issues(report);  // 只有警告
+  if (!allowed_to_listen(*report.snapshot, parsed->allow_unauthenticated)) return kStartError;
+  auto tls = upstream::make_tls_contexts(*report.snapshot);  // 加载系统证书库约 40 ms，只做一次
+  if (!tls) {
+    std::fprintf(stderr, "TLS 初始化失败：%s\n", tls.error().message.c_str());
+    return kStartError;
+  }
+  return run(report.snapshot, *tls);
 }
 
 }  // namespace llmgw::app

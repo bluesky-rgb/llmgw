@@ -107,3 +107,31 @@ TEST_F(ServerTest, nul_byte_in_body_is_rejected) {
 
 }  // namespace
 }  // namespace llmgw::server::test
+
+// 任务 1.9（独立审查 #1、#2）：serve 在没有鉴权时只允许监听本机地址。判断必须按 Server 绑定时
+// 同样的方式解析监听地址，再检查解析结果：只看字符串（"127." 开头）时，主机名 127.evil.example
+// 会被当作本机地址，而 /etc/hosts 可以把它解析成 0.0.0.0；反过来 ::ffff:127.0.0.1 等写法会被误拒
+namespace llmgw::server {
+namespace {
+
+TEST(ListenAddress, loopback_is_judged_by_the_resolved_address) {
+  for (const char* host :
+       {"127.0.0.1", "127.5.6.7", "::1", "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1", "localhost"}) {
+    SCOPED_TRACE(host);
+    auto r = listen_address_is_loopback(host);
+    ASSERT_TRUE(r.has_value()) << r.error().message;
+    EXPECT_TRUE(*r);
+  }
+  for (const char* host : {"0.0.0.0", "::", "192.0.2.1", "::ffff:192.0.2.1", "10.0.0.1"}) {
+    SCOPED_TRACE(host);
+    auto r = listen_address_is_loopback(host);
+    ASSERT_TRUE(r.has_value()) << r.error().message;
+    EXPECT_FALSE(*r);
+  }
+  // 解析不了：报错（调用者当作“不是本机地址”拒绝启动），而不是按字符串猜
+  const auto unresolvable = listen_address_is_loopback("127.no-such-host.invalid");
+  EXPECT_FALSE(unresolvable.has_value() && *unresolvable);
+}
+
+}  // namespace
+}  // namespace llmgw::server

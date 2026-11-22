@@ -2,6 +2,7 @@
 // “有没有重试”的唯一可信证据：后面的上游有没有收到请求（requests()）。
 #include "llmgw/executor/executor.h"
 
+#include <algorithm>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -356,6 +357,7 @@ TEST(Executor, X6_500_504_are_returned_as_is_by_default) {
         EXPECT_NE(out->body.find("from upstream"), std::string::npos) << "原样返回上游的响应体";
         EXPECT_EQ(out->header("X-LLMGW-Provider"), "a");
         EXPECT_EQ(good.requests(), 0);
+        EXPECT_EQ(out->header("x-should-retry"), "false") << "可能已经扣费：告诉 SDK 不要自动重试";
       } else {
         EXPECT_EQ(out->status, 200);
         EXPECT_EQ(good.requests(), 1);
@@ -377,6 +379,50 @@ TEST(Executor, X6_500_504_are_returned_as_is_by_default) {
   EXPECT_EQ(out->header("X-LLMGW-Attempts"), "2");
 }
 
+// 独立审查 1.9 #3：x-should-retry 的三种情况
+TEST(Executor, X6_should_retry_hint_on_returned_errors) {
+  auto count = [](const Drained& d, std::string_view name) {
+    return std::ranges::count_if(d.headers, [&](const Header& h) {
+      return std::ranges::equal(h.name, name, [](char a, char b) {
+        return std::tolower(static_cast<unsigned char>(a)) ==
+               std::tolower(static_cast<unsigned char>(b));
+      });
+    });
+  };
+  {  // 之前有可能已扣费的尝试（重试了 500），最后原样返回 409：SDK 默认会重试 409，必须告诉它不要
+    TestUpstream u1([](const Received&) { return status(500); });
+    TestUpstream u2([](const Received&) { return status(409); });
+    XEnv env;
+    env.config->retry.retry_on_ambiguous = true;
+    env.add("a", u1.port());
+    env.add("b", u2.port());
+    env.start();
+    auto out = env.run();
+    ASSERT_TRUE(out.has_value());
+    EXPECT_EQ(out->status, 409);
+    EXPECT_EQ(out->header("x-should-retry"), "false");
+  }
+  {  // 上游自己说不要重试：转发
+    TestUpstream u([](const Received&) { return status(400, "x-should-retry: false\r\n"); });
+    XEnv env;
+    env.add("a", u.port());
+    env.start();
+    auto out = env.run();
+    ASSERT_TRUE(out.has_value());
+    EXPECT_EQ(out->header("x-should-retry"), "false");
+  }
+  {  // 上游说可以重试，但结果不确定（500）：以网关的 false 为准，只有一个头
+    TestUpstream u([](const Received&) { return status(500, "x-should-retry: true\r\n"); });
+    XEnv env;
+    env.add("a", u.port());
+    env.start();
+    auto out = env.run();
+    ASSERT_TRUE(out.has_value());
+    EXPECT_EQ(out->header("x-should-retry"), "false");
+    EXPECT_EQ(count(*out, "x-should-retry"), 1);
+  }
+}
+
 // ---------- X7：其他 4xx → 原样返回 ----------
 
 TEST(Executor, X7_other_4xx_are_returned_as_is) {
@@ -395,6 +441,7 @@ TEST(Executor, X7_other_4xx_are_returned_as_is) {
     EXPECT_EQ(out->header("X-LLMGW-Provider"), "a");
     EXPECT_EQ(out->header("X-LLMGW-Attempts"), "1");
     EXPECT_EQ(good.requests(), 0);
+    EXPECT_EQ(out->header("x-should-retry"), "") << "4xx 是确定的结果，不需要这个提示";
   }
 }
 

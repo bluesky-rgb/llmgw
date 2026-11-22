@@ -126,7 +126,7 @@ Task<> ControlPlane::serve(tcp::socket socket, Plane plane) {
       res.body() = R"({"status":"ready"})";
     }
   } else if (plane == Plane::kObservability) {
-    not_found(path == "/metrics" ? "/metrics 将在任务 1.2 中实现" : "观测面提供 /health 和 /ready");
+    not_found(path == "/metrics" ? "/metrics 将在任务 2.8 中实现" : "观测面提供 /health 和 /ready");
   } else {
     not_found("管理接口将在 v0.4 中提供（任务 3.x）");
   }

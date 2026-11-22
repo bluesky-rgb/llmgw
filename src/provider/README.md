@@ -27,7 +27,7 @@ if (!s) { /* s.error() 是 upstream::AttemptError：stage + maybe_sent，executo
 - **没有被改写路径经过的值逐字节保留**（大整数、转义、空白都不变）。改写路径经过的部分不是合法的 JSON 时返回 400
 - **usage 块**：发给上游的请求要求了 usage、而客户端没有要求时（键解码后判断，重复的键任意一项为 true 即为要求了），stream 去掉上游的 usage 块，客户端看到的与没有网关时一样
 - **请求头**：`Authorization: Bearer <密钥>`、`Content-Type`、`Accept`、`User-Agent: llmgw/<版本>`。客户端的请求头不转发
-- **响应头白名单**（不区分大小写，保留上游的写法）：`Content-Type`、`Cache-Control`、`Retry-After`、`retry-after-ms`；上游的 `x-request-id` / `request-id` 改名为 `X-LLMGW-Upstream-Request-Id`（两个都有时只转发第一个）。其余（`Set-Cookie`、`openai-*`、上游的 `x-ratelimit-*`、逐跳头等）丢弃
+- **响应头白名单**（不区分大小写，保留上游的写法）：`Content-Type`、`Cache-Control`、`Retry-After`、`retry-after-ms`、`x-should-retry`（executor 在结果不确定时改为 `false`）；上游的 `x-request-id` / `request-id` 改名为 `X-LLMGW-Upstream-Request-Id`（两个都有时只转发第一个）。其余（`Set-Cookie`、`openai-*`、上游的 `x-ratelimit-*`、逐跳头等）丢弃
 - **`attempt()` 的错误**：发送失败、配置了 `error_mapping` 时预读出错，都原样返回 upstream 的 `AttemptError`（预读出错时 `maybe_sent = true`：请求已经发出）。读响应体中途的错误由 `next()` 返回
 
 ## 内部结构

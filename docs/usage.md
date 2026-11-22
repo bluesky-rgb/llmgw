@@ -1,32 +1,28 @@
-# v0.1 原型使用手册
+# 使用手册（v0.2 Alpha）
 
-> 本文说明**当前 v0.1 原型**的用法。原型的代码在 [`prototype/`](../prototype/) 目录中，编译产物是 `build/prototype/llmgw`。v0.1 基于 cpp-httplib（线程池阻塞模型），用于验证功能，并在 v1.0 中作为性能对照组保留。v1.0 的设计见 [design.md](design.md)，两者的配置格式会有差异。
+> 本文说明当前版本的用法：新架构的 `llmgw`（任务 1.1–1.9）。v0.1 原型现在只作为压测的对照组，它的说明见 [prototype/README.md](../prototype/README.md)。
+> **v0.2 是 Alpha 版：还没有客户端鉴权。** 请只在本机或可信网络中使用（见“运行”）。
 
-## 原型已实现的功能
+## 已实现的功能
 
-- **兼容 OpenAI 接口**：`/v1/chat/completions`、`/v1/models`，现有 SDK 只需改 `base_url`
-- **按模型配置故障切换链**：上游返回 5xx、429 或连接失败时，按顺序切换到下一个目标
-- **流式输出（SSE）**：逐块实时转发；在第一个字节发出之前也可以切换
-- **状态码如实转发**：流式请求中上游返回 400，客户端收到的也是 400
-- **模型名映射**：对外叫 `smart`，对内可以是 `gpt-5.6-sol`、`MiniMax-M3`、`mimo-v2.6-pro` 或本地的 `qwen2.5-7b`
-- **网关鉴权**：客户端使用网关自己的 key，上游的真实 key 不会暴露给应用
-- **Token 统计、Prometheus 指标、JSON 结构化日志**
-
-### 原型的已知问题
-
-这些问题都会在 v1.0 中解决，详见 [design.md 第 2.1 节](design.md#21-v10-支持的功能)：
-
-- 读取超时后也会切换上游，**可能造成重复扣费**
-- 一个流式请求占用两个线程，并发能力受 `listen.threads` 限制
-- 每个请求都新建上游连接，没有连接池
-- 转发队列没有上限（没有背压），客户端很慢时内存会增长
-- 只有读取超时，没有总超时；客户端断开后，上游线程最长要等到读取超时才会退出
-- 没有熔断；网关 key 在配置中是明文
-- 没有厂商差异适配：比如请求里带着 MiMo 的 `reasoning_content` 切换到 GPT 时，可能返回 400（见 [providers.md](providers.md)）
+| 功能 | 状态 |
+|---|---|
+| OpenAI 兼容接口：`POST /v1/chat/completions`（流式、非流式）、`GET /v1/models` | ✅ |
+| 按模型配置故障切换链；**重试规则保证不会重复扣费**（[design.md 6.1](design.md#61-重试与防重复扣费)） | ✅ 1.7 |
+| 四种超时：连接、首字节、空闲、总；可以按目标单独设置 | ✅ 1.7 |
+| 连接池（keep-alive）、DNS 缓存、HTTPS 代理 | ✅ 1.4 |
+| 请求改写：替换模型名、`drop_fields`、`rename_fields`、`set_fields` | ✅ 1.6 |
+| 流式响应自动要求返回用量（客户端没要求时再去掉，客户端看到的与直连相同）；MiniMax 业务错误码映射 | ✅ 1.5、1.6 |
+| 背压（客户端读得慢时不再从上游拉取）、客户端断开时立即取消上游请求 | ✅ 1.3 |
+| 客户端鉴权（网关 key） | ⏳ 2.2（v0.3） |
+| 限流、费用核算与预算 | ⏳ 2.3、2.4 |
+| 熔断、重试预算 | ⏳ 2.5 |
+| Prometheus 指标、访问日志 | ⏳ 2.8 |
+| 热加载、优雅退出 | ⏳ 3.1、3.3 |
 
 ## 编译
 
-需要 CMake ≥ 3.24、支持 C++20 的编译器（新模块使用 C++20，原型本身是 C++17），以及 OpenSSL 3（Ubuntu 下安装 `libssl-dev`）。依赖库会自动从 GitHub 下载。
+需要 CMake ≥ 3.24、GCC 13 或 Clang 17 以上（C++20）、OpenSSL 3（Ubuntu：`libssl-dev`）。Boost 等依赖在配置时自动下载（校验 SHA-256）。
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -34,120 +30,123 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-离线构建时，可以指定本地源码目录：
+可执行文件是 `build/src/app/llmgw`。只要网关本身时可以加 `-DLLMGW_BUILD_TESTS=OFF -DLLMGW_BUILD_PROTOTYPE=OFF`，并且只构建 `llmgw_app` 目标。
+
+## 配置
+
+从示例开始：[config/llmgw.example.json](../config/llmgw.example.json)（已包含 GPT、MiniMax 国内站、MiMo Token Plan 和三个模型）。完整的字段说明见 [design.md 第 7 节](design.md#7-配置)。
 
 ```bash
-cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_CPP_HTTPLIB=/path/to/cpp-httplib \
-                    -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/path/to/json \
-                    -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/path/to/googletest
+cp config/llmgw.example.json llmgw.json
+# v0.2 还没有客户端鉴权：示例中数据面监听 0.0.0.0，直接启动会被拒绝（见“运行”）。本机使用时改为 127.0.0.1
+sed -i 's/"host": "0.0.0.0"/"host": "127.0.0.1"/' llmgw.json
+# 上游 key 只放在环境变量中，配置里只写变量名（api_key_env）
+export OPENAI_API_KEY=sk-...  MINIMAX_API_KEY=...  MIMO_API_KEY=tp-...
+./build/src/app/llmgw check -c llmgw.json      # 只校验配置；错误会指出字段的位置
 ```
+
+常用的字段：
+
+| 字段 | 说明 |
+|---|---|
+| `server.host` / `server.port` | 数据面的监听地址，默认 `0.0.0.0:8080`。**v0.2 中请改为 `127.0.0.1`**（见下） |
+| `server.observability_listen` | `/health`、`/ready`，默认 `0.0.0.0:9100` |
+| `server.workers` | Worker 线程数，`0` 表示 CPU 核数 |
+| `timeouts` | `connect`、`first_byte`（流式）、`first_byte_non_stream`、`idle`、`total`，单位秒 |
+| `providers[]` | `name`、`base_url`（带 `/v1`）、`api_key_env`、`max_connections`、`error_mapping`、`ca_file` |
+| `proxy.https` | `"env"` 表示读取 `HTTPS_PROXY` / `NO_PROXY`；`proxy.per_provider` 可以按上游设置代理或 `"direct"` |
+| `models[].targets[]` | 按顺序尝试：`provider`、`model`（上游的模型名），以及 `drop_fields`、`rename_fields`、`set_fields`、`timeouts` |
+| `retry.retry_on_ambiguous` | 是否重试“结果不确定”的失败（已发出请求后超时、500、504 以及 502 / 503 以外的其他 5xx），默认 `false`：可能重复扣费 |
+
+与原型的区别：没有 `listen`（改为 `server`）、没有 `api_keys`（鉴权在 2.2）、上游没有额外请求头（`headers`）、key 只能从环境变量读取。
 
 ## 运行
 
 ```bash
-cp prototype/config.example.json config.json
-export OPENAI_API_KEY=sk-...
-export MINIMAX_API_KEY=...        # MiniMax 国内站
-export MIMO_API_KEY=tp-...        # 小米 MiMo Token Plan
-./build/prototype/llmgw --config config.json --check   # 只检查配置，不启动
-./build/prototype/llmgw --config config.json
+./build/src/app/llmgw serve -c llmgw.json
+# llmgw 已启动：数据面 127.0.0.1:8080，管理面 127.0.0.1:9090，观测面 0.0.0.0:9100，N 个 Worker（workers: 0 时等于 CPU 核数）
 ```
+
+Ctrl-C 或 SIGTERM 停止（进行中的请求会被中断；优雅退出在 3.3）。退出码：0 正常停止，1 配置错误或启动失败，2 参数错误或配置文件读不了。
+
+**没有鉴权时的保护：** 网关持有上游 key，却还不检查客户端是谁。数据面监听的不是本机地址（`127.x.x.x`、`::1`、`localhost`）时，`serve` 会**拒绝启动**并说明原因。确认只有可信的客户端能访问这个端口（比如容器只映射到宿主机的 `127.0.0.1`、或者在防火墙后面）时，加 `--allow-unauthenticated`。
 
 ## 调用
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
-  -H "Authorization: Bearer sk-gw-change-me" \
   -H "Content-Type: application/json" \
   -d '{"model":"smart","stream":true,"messages":[{"role":"user","content":"你好"}]}'
 ```
 
-使用 OpenAI 官方 Python SDK：
+OpenAI 官方 Python SDK（`api_key` 目前可以随便填）。可能已经扣费的错误（网关的 504、原样转发的上游 500 / 504）都带 `x-should-retry: false`，官方 SDK 不会自动重试它们；其他 SDK 的兼容性在 2.6 中验证：
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="sk-gw-change-me")
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="unused")
 for chunk in client.chat.completions.create(
-        model="smart", stream=True,
-        messages=[{"role": "user", "content": "你好"}]):
+        model="smart", stream=True, messages=[{"role": "user", "content": "你好"}]):
     print(chunk.choices[0].delta.content or "", end="")
 ```
 
-## 接入本地 llama.cpp
+响应头：`X-LLMGW-Provider`、`X-LLMGW-Upstream-Model`（实际由谁处理）、`X-LLMGW-Attempts`（尝试了几次）、`X-Request-Id`（排障用；客户端可以自己带上）、`x-should-retry`（错误时：是否建议客户端自动重试）。
 
-llama.cpp 自带的 `llama-server` 提供 OpenAI 兼容接口，可以直接作为上游：
+## 什么情况会切换
 
-```bash
-# 在 llama.cpp 目录下
-./build/bin/llama-server -m models/qwen2.5-7b-instruct-q4_k_m.gguf --port 8081
-```
-
-然后在配置中加入：
-
-```json
-{ "name": "local", "base_url": "http://127.0.0.1:8081/v1", "read_timeout_seconds": 600 }
-```
-
-把 `local` 放在某个模型 `targets` 的末尾，云端全部不可用时就会落到本地模型上。
-
-## 配置说明
-
-| 字段 | 说明 |
+| 情况 | 默认行为 |
 |---|---|
-| `listen.host` / `listen.port` | 监听地址，默认 `0.0.0.0:8080` |
-| `listen.threads` | 工作线程数，默认 64。原型中一个流式请求会占用线程，所以它也限制了最大并发流数 |
-| `api_keys` | 客户端访问网关的密钥列表；为空表示不鉴权（只建议在内网使用） |
-| `providers[].name` | 上游名称，在 `models` 中引用 |
-| `providers[].base_url` | 上游地址，带 `/v1`，与 OpenAI SDK 的 `base_url` 写法相同 |
-| `providers[].api_key_env` | 从哪个环境变量读取上游密钥（推荐）；也可以直接写 `api_key` |
-| `providers[].connect_timeout_seconds` | 连接超时，默认 10 秒 |
-| `providers[].read_timeout_seconds` | 读取超时，默认 300 秒 |
-| `providers[].headers` | 额外发给上游的请求头 |
-| `models[].name` | 对外暴露的模型名 |
-| `models[].targets` | 按顺序尝试的上游列表；`model` 不写时沿用对外模型名 |
+| DNS、连接、TLS 失败；连接池排队超时 | 换下一个目标 |
+| 上游返回 429、502、503；401、403、余额不足 | 换下一个目标（401 / 403 是网关自己的上游 key 有问题，不会转发给客户端） |
+| **已发出请求后超时或断开；上游返回 500、504 或其他 5xx（502、503 除外）** | **不重试**：504 或原样返回（带 `x-should-retry: false`）。上游可能已经处理并扣费。`retry.retry_on_ambiguous: true` 时换下一个 |
+| 其他 4xx | 原样返回（请求本身有问题，换上游也没用） |
+| 流式输出开始以后中断 | 不切换，在流的末尾追加一条 `error` 事件 |
+| 所有目标都失败 | 有可能已扣费的尝试：504；最后一个是 429：429（带上游的 `Retry-After`）；否则 502 `upstream_unavailable` |
 
-### 什么情况会切换（原型的行为）
-
-| 情况 | 行为 |
-|---|---|
-| 连接失败、超时 | 切到下一个目标（⚠️ v1.0 中读取超时默认不再重试，见 [design.md 6.1](design.md#61-重试与防重复扣费)） |
-| HTTP 5xx、429 | 切到下一个目标；如果已经是最后一个，原样返回 |
-| 其他 4xx | 不切换，原样返回 |
-| 流式输出开始后上游中断 | 无法切换，在流末尾追加一条 `error` 事件 |
-| 全部目标都失败 | 返回 502，`code: upstream_unavailable` |
+完整的规则表见 [design.md 6.1](design.md#61-重试与防重复扣费)。
 
 ## 接口
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/v1/chat/completions` | 聊天补全，支持 `stream: true` |
-| GET | `/v1/models` | 列出配置中的模型 |
-| GET | `/health` | 健康检查 |
-| GET | `/metrics` | Prometheus 指标 |
+| 端口 | 方法 | 路径 | 说明 |
+|---|---|---|---|
+| 数据面 | POST | `/v1/chat/completions` | 聊天补全，支持 `stream: true` |
+| 数据面 | GET | `/v1/models` | 配置中的模型 |
+| 观测面 | GET | `/health` | 进程存活 |
+| 观测面 | GET | `/ready` | 可以接收请求 |
 
-响应头 `X-LLMGW-Provider` 表示这次请求最终由哪个上游处理，`X-Request-Id` 用于和日志对应。
+## 接入本地 llama.cpp
 
-## 监控指标
+`llama-server` 提供 OpenAI 兼容接口，可以直接作为上游。它不需要 key，但 `api_key_env` 是必填的，给它一个任意值：
 
-```
-llmgw_requests_total{model, provider, status, stream}
-llmgw_request_duration_ms_bucket{model, le}        # 端到端延迟直方图
-llmgw_upstream_failures_total{provider, reason}    # 每一次失败的上游尝试
-llmgw_tokens_total{model, provider, type}          # prompt / completion
+```bash
+./build/bin/llama-server -m models/qwen2.5-7b-instruct-q4_k_m.gguf --port 8081   # llama.cpp 目录下
+export LOCAL_KEY=none
 ```
 
-> 流式请求的 usage：llama.cpp 默认会在最后一块中返回；OpenAI 需要请求中带上 `"stream_options": {"include_usage": true}`（v1.0 会自动加上）。
+```json
+{ "name": "local", "base_url": "http://127.0.0.1:8081/v1", "api_key_env": "LOCAL_KEY" }
+```
 
-## 测试
-
-测试会在进程内启动一个假上游和一个真实网关，从外部发起 HTTP 请求，覆盖非流式、流式、5xx / 429 / 连接失败切换、错误透传、鉴权和并发流。CI 中同时使用 AddressSanitizer、UBSan 和 ThreadSanitizer 运行。
+把 `local` 放在某个模型 `targets` 的末尾，云端全部不可用时就会落到本地模型上。本地模型首字较慢时，给这个目标单独设置 `"timeouts": { "first_byte": 120 }`。
 
 ## Docker
 
 ```bash
-docker build -f prototype/Dockerfile -t llmgw-prototype .
-docker run -p 8080:8080 -v $PWD/config.json:/etc/llmgw/config.json:ro \
-  -e OPENAI_API_KEY -e MINIMAX_API_KEY -e MIMO_API_KEY llmgw-prototype
+docker build -t llmgw .
+# 容器用自己的配置：server.host 必须是 0.0.0.0（监听 127.0.0.1 时，端口映射收不到连接）
+cp config/llmgw.example.json llmgw.docker.json
+chmod 644 llmgw.docker.json   # 镜像以非 root 用户运行，要能读到这个文件
+docker run --rm -p 127.0.0.1:8080:8080 -p 127.0.0.1:9100:9100 \
+  -v $PWD/llmgw.docker.json:/etc/llmgw/llmgw.json:ro \
+  -e OPENAI_API_KEY -e MINIMAX_API_KEY -e MIMO_API_KEY \
+  llmgw serve -c /etc/llmgw/llmgw.json --allow-unauthenticated
 ```
 
-> Dockerfile 还没有实际构建验证过。容器内的 `127.0.0.1` 指向容器自己；如果要访问宿主机上的 llama.cpp，请使用 `host.docker.internal`，或者加上 `--network host`。
+容器中监听 `0.0.0.0`，所以要加 `--allow-unauthenticated`；`-p 127.0.0.1:…` 保证只有宿主机本身能访问。不加这个参数时容器会拒绝启动并说明原因。配置文件读不了时退出码是 2。容器内的 `127.0.0.1` 指向容器自己：访问宿主机上的 llama.cpp 请使用 `host.docker.internal` 或 `--network host`。CI 中会构建这个镜像并验证这两种启动方式。
+
+## 测试
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+单元测试、集成测试（进程内的 Server + 测试上游）、`llmgw serve` 的进程级冒烟测试；CI 中还会用 AddressSanitizer + UBSan、ThreadSanitizer 各跑一遍，并对解析器做模糊测试。用真实 key 验证三家上游的工具见 [tools/provider-probe](../tools/provider-probe/README.md)（不在 CI 中运行）。

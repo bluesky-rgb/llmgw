@@ -9,7 +9,7 @@ llmgw 把 OpenAI（GPT）、MiniMax、小米 MiMo 以及本地 llama.cpp 等多�
 
 ![三大支柱](docs/images/17-value-pillars.svg)
 
-> **项目状态：** v0.1 原型已经可以运行（[使用手册](docs/usage.md)）。v1.0 的设计已经完成，正在开发中，计划 12 月中发布公开的 Alpha 版（[落地计划](docs/roadmap.md)）。产品定位、目标用户和开源策略见 [产品定义](docs/product.md)。
+> **项目状态：** v0.2 Alpha：新架构已经可以运行（[使用手册](docs/usage.md)）——OpenAI 兼容接口、故障切换、不会重复扣费的重试规则、四种超时、连接池、背压。**还没有客户端鉴权、限流和预算**（v0.3），请只在本机或可信网络中使用。v1.0 计划 1 月发布（[落地计划](docs/roadmap.md)）。产品定位、目标用户和开源策略见 [产品定义](docs/product.md)。
 
 ## 解决什么问题
 
@@ -60,25 +60,26 @@ client.chat.completions.create(model="smart", messages=[{"role": "user", "conten
 
 模型名使用网关的逻辑名（如 `smart`、`fast`），以后网关调整背后的厂商时，应用代码不用改。错误处理、重试、超时、用量查询等见 [客户端接入指南](docs/client-guide.md)。
 
-## 快速开始（v0.1 原型）
+## 快速开始
 
 ```bash
-# 编译（需要 CMake ≥ 3.24、C++20 编译器、OpenSSL 3）
+# 编译（需要 CMake ≥ 3.24、GCC 13 / Clang 17 以上、OpenSSL 3）
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build && ctest --test-dir build
 
-# 配置并运行（示例配置已包含 GPT、MiniMax 国内站、MiMo Token Plan）
-cp prototype/config.example.json config.json
+# 配置（示例已包含 GPT、MiniMax 国内站、MiMo Token Plan）。v0.2 还没有鉴权：只监听本机
+cp config/llmgw.example.json llmgw.json
+sed -i 's/"host": "0.0.0.0"/"host": "127.0.0.1"/' llmgw.json
 export OPENAI_API_KEY=sk-...  MINIMAX_API_KEY=...  MIMO_API_KEY=tp-...
-./build/prototype/llmgw --config config.json
+./build/src/app/llmgw check -c llmgw.json
+./build/src/app/llmgw serve -c llmgw.json
 
 # 调用
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H "Authorization: Bearer sk-gw-change-me" -H "Content-Type: application/json" \
+curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" \
   -d '{"model":"smart","stream":true,"messages":[{"role":"user","content":"你好"}]}'
 ```
 
-`smart` 会先用 GPT，失败后依次切换到 MiniMax、MiMo。配置字段、接入本地 llama.cpp、监控指标、Docker 等详见 [原型使用手册](docs/usage.md)。
+`smart` 会先用 GPT，失败后依次切换到 MiniMax、MiMo；**请求可能已经被上游扣费时不会重试**。配置字段、切换规则、接入本地 llama.cpp、Docker 等详见 [使用手册](docs/usage.md)。
 
 ## 文档导航
 
@@ -97,7 +98,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | 目标分解、上下文、用例、组件、类、时序、状态、部署、计划等分析图 | [分析与设计图](docs/diagrams.md) |
 | 每个设计决策的背景、选择和代价 | [设计决策记录](docs/decisions.md) |
 | 性能数据：并发流数、内存、延迟、和原型的对比 | [性能基准](docs/benchmark.md) |
-| 怎么编译、配置和运行当前的原型 | [原型使用手册](docs/usage.md) |
+| 怎么编译、配置和运行当前版本 | [使用手册](docs/usage.md) |
 | 先做什么、怎么排期、落后了先砍什么 | [落地计划](docs/roadmap.md) |
 | 上线前还要做哪些事（按优先级） | [生产就绪检查清单](docs/production-readiness.md) |
 | 还有哪些问题没定、哪些文档要补 | [设计文档第 11 节](docs/design.md#11-待补充与开放问题) |
@@ -117,13 +118,15 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ## 当前代码结构
 
 ```
-src/          v1.0 的 12 个模块（目前是骨架：目录、README、CMake 目标、依赖规则）
-tests/        v1.0 的单元测试（GoogleTest）
-prototype/    v0.1 原型（cpp-httplib），作为性能对照组保留
+src/          12 个模块和 app；已实现 core、config、server、upstream、stream、provider、router、executor、app
+tests/        单元、集成、模糊测试，llmgw serve 的进程级冒烟测试；真实上游的响应样本
+prototype/    v0.1 原型（cpp-httplib），只作为性能对照组保留（prototype/README.md）
+config/       配置示例
+Dockerfile    新架构的镜像
 cmake/        模块函数、依赖清单（dependencies.json）
-tools/        依赖规则、TODO、漏洞扫描、clang-tidy 等检查脚本
+tools/        mock-upstream（假上游）、压测脚本、上游探测工具，以及依赖规则、TODO、漏洞扫描、clang-tidy 等检查脚本
 docs/         设计文档、图解、分析图、决策记录、使用手册
-.github/      CI：Release、ASan + UBSan、TSan 三套构建
+.github/      CI：Release、ASan + UBSan、TSan 三套构建，架构检查、模糊测试、镜像、依赖漏洞扫描
 ```
 
 v1.0 的目标目录结构见 [设计文档 4.1 节](docs/design.md#41-目录结构v10-目标)。
