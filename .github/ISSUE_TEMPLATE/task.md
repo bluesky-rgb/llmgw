@@ -1,5 +1,5 @@
 ---
-name: 开发任务
+name: 开发任务（维护者用）/ Dev task (maintainers)
 about: 落地计划中的一个任务（按 docs/development-process.md 的流程推进）
 title: "[任务 x.y] "
 labels: ["status:design"]
