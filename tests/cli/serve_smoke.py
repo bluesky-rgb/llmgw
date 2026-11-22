@@ -151,6 +151,30 @@ def main() -> None:
             fail("输出中出现了密钥")
         print(f"通过：切换后成功，SIGTERM 后 {time.monotonic() - t0:.2f} 秒退出")
 
+        # 任务 1.9：没有鉴权（2.2 之前）时，数据面监听非本机地址 → 拒绝启动，除非显式确认
+        config["server"]["host"] = "0.0.0.0"
+        port = config["server"]["port"] = free_port()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(config, f)
+        r = subprocess.run([exe, "serve", "-c", path], env=env, capture_output=True, text=True, timeout=10)
+        if r.returncode != 1 or "--allow-unauthenticated" not in r.stderr:
+            fail(f"监听 0.0.0.0 且没有 --allow-unauthenticated 时应该拒绝启动：{r.returncode} {r.stderr}")
+        with socket.socket() as s:  # 拒绝启动：端口不能有任何时刻在监听（检查发生在绑定之前）
+            s.settimeout(1)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                fail("拒绝启动之后端口仍在监听")
+        proc = subprocess.Popen([exe, "serve", "-c", path, "--allow-unauthenticated"], env=env,
+                                stderr=subprocess.PIPE, text=True)
+        first = proc.stderr.readline()
+        started = proc.stderr.readline() if "没有客户端鉴权" in first else first
+        if "没有客户端鉴权" not in first or "已启动" not in started:
+            fail(f"加了 --allow-unauthenticated 应该启动并打印警告：{first!r} {started!r}", proc)
+        proc.send_signal(signal.SIGTERM)
+        proc.communicate(timeout=5)
+        if proc.returncode != 0:
+            fail(f"退出码 {proc.returncode}")
+        config["server"]["host"] = "127.0.0.1"
+
         # 配置错误：退出码 1，不启动
         config["models"][0]["targets"][0]["provider"] = "missing"
         with open(path, "w", encoding="utf-8") as f:

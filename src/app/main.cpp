@@ -17,7 +17,10 @@ constexpr int kUsageError = 2;
 void print_usage() {
   std::fputs(
       "用法：\n"
-      "  llmgw serve [-c 配置文件]                启动网关（Ctrl-C 或 SIGTERM 停止）\n"
+      "  llmgw serve [-c 配置文件] [--allow-unauthenticated]\n"
+      "                                           启动网关（Ctrl-C 或 SIGTERM "
+      "停止）。还没有客户端鉴权：\n"
+      "                                           监听非本机地址时需要 --allow-unauthenticated\n"
       "  llmgw check [-c 配置文件] [--skip-env]   校验配置文件\n"
       "  llmgw version                           显示版本\n"
       "\n"

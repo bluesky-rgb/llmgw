@@ -139,6 +139,34 @@ jobs:
           name: fuzz-crashes
           path: crashes/
 
+  # 新架构的镜像（任务 1.9）：能构建；默认因为没有鉴权而拒绝启动；显式确认后能启动、/health 可用
+  docker:
+    if: github.event_name != 'schedule'
+    name: docker
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build image
+        run: docker build -t llmgw:ci .
+      - name: Refuses to start without authentication
+        run: |
+          set +e
+          out=$(docker run --rm -e OPENAI_API_KEY=x -e MINIMAX_API_KEY=x -e MIMO_API_KEY=x llmgw:ci 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          test "$rc" = 1
+          echo "$out" | grep -q -- "--allow-unauthenticated"
+      - name: Starts with --allow-unauthenticated
+        run: |
+          docker run -d --name gw -p 127.0.0.1:9100:9100 \
+            -e OPENAI_API_KEY=x -e MINIMAX_API_KEY=x -e MIMO_API_KEY=x \
+            llmgw:ci serve -c /etc/llmgw/llmgw.json --allow-unauthenticated
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:9100/health && break; sleep 1; done
+          curl -sf http://127.0.0.1:9100/health || { docker logs gw; exit 1; }
+          docker logs gw
+          docker stop gw
+
   security:
     name: security
     runs-on: ubuntu-24.04

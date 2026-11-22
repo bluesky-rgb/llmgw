@@ -6,6 +6,7 @@
 #include <boost/asio/use_awaitable.hpp>
 #include <cctype>
 #include <cstdio>
+#include <memory>
 #include <tuple>
 
 namespace llmgw::upstream::detail {
@@ -61,8 +62,6 @@ class BodyImpl final : public Body {
   ~BodyImpl() override { finish(); }
 
   Task<Outcome<bool>> read(std::string* out) override {
-    // 每次最多读这么多：SSE 的一个事件通常几百字节，非流式响应的大块数据分几次读
-    constexpr std::size_t kChunk = std::size_t{16} * 1024;
     for (;;) {
       if (failed_) co_return failure(Stage::kBody, true, "之前已经出错");
       if (parser_->is_done()) {
@@ -70,25 +69,26 @@ class BodyImpl final : public Body {
         co_return false;
       }
       Connection* conn = lease_.conn();
-      const std::size_t old = out->size();
-      out->resize(old + kChunk);
+      // 读进自己的缓冲区，再把读到的字节追加给调用者。不能先把调用者的缓冲区 resize 出 16 KB：
+      // resize 会清零，而一个 SSE 事件只有一百多字节（任务 1.9 压测：callgrind 中 58% 的指令是
+      // 这里的 memset）。调用者的缓冲区只在读取成功之后才改动：等待时被取消、抛出异常也不会
+      // 留下多余的字节（1.4 独立审查 #13）
+      if (!scratch_) scratch_ = std::make_unique_for_overwrite<std::array<char, kChunk>>();
       auto& body = parser_->get().body();
-      body.data = out->data() + old;
+      body.data = scratch_->data();
       body.size = kChunk;
       boost::system::error_code ec;
       try {
         std::tie(ec, std::ignore) = co_await conn->with_stream(
             [&](auto& s) { return http::async_read_some(s, conn->buffer(), *parser_, kTuple); });
       } catch (...) {
-        // 比如协程在等待时被取消并抛出：不能把预留的 16 KB 留在调用者的缓冲区里（独立审查 #13）
-        out->resize(old);
         body.data = nullptr;
         body.size = 0;
         failed_ = true;
         throw;
       }
       const std::size_t got = kChunk - body.size;
-      out->resize(old + got);
+      out->append(scratch_->data(), got);
       body.data = nullptr;
       body.size = 0;
       if (ec == http::error::need_buffer) ec = {};
@@ -115,8 +115,12 @@ class BodyImpl final : public Body {
     }
   }
 
+  // 每次最多读这么多：SSE 的一个事件通常几百字节，非流式响应的大块数据分几次读
+  static constexpr std::size_t kChunk = std::size_t{16} * 1024;
+
   Lease lease_;
   std::unique_ptr<detail::Parser> parser_;
+  std::unique_ptr<std::array<char, kChunk>> scratch_;  // 第一次读取时分配，不初始化
   bool failed_ = false;
 };
 

@@ -41,6 +41,16 @@ Result<tcp::endpoint> resolve(const std::string& host, std::uint16_t port,
 
 }  // namespace
 
+Result<bool> listen_address_is_loopback(const std::string& host) {
+  auto ep = resolve(host, 0, "检查");
+  if (!ep) return fail(ep.error());
+  const auto addr = ep->address();
+  if (addr.is_v6() && addr.to_v6().is_v4_mapped()) {
+    return boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, addr.to_v6()).is_loopback();
+  }
+  return addr.is_loopback();
+}
+
 Server::Server(ServerOptions options) : impl_(std::make_unique<Impl>()) {
   impl_->options = std::move(options);
 }

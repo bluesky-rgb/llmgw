@@ -112,7 +112,8 @@ add_executable(llmgw_upstream_tests
   integration/upstream/review_test.cpp
   integration/provider/attempt_test.cpp
   integration/executor/executor_test.cpp
-  integration/app/gateway_test.cpp)
+  integration/app/gateway_test.cpp
+  integration/app/prototype_parity_test.cpp)
 # 审查用例（review_test.cpp）直接测试内部组件（连接池、报文、TLS 身份设置）
 target_include_directories(llmgw_upstream_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/upstream")
 target_link_libraries(llmgw_upstream_tests PRIVATE GTest::gtest_main llmgw::upstream llmgw::provider llmgw::executor llmgw::config llmgw_app_lib Boost::beast

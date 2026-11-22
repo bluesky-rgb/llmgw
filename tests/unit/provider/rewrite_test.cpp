@@ -292,6 +292,7 @@ TEST(ResponseHeaders, P7_allowlist_and_request_id) {
                                {"Cache-Control", "no-cache"},
                                {"Retry-After", "3"},
                                {"retry-after-ms", "3000"},
+                               {"x-should-retry", "false"},
                                {"x-request-id", "req-1"},
                                {"openai-organization", "org-x"},
                                {"Content-Length", "10"}};
@@ -299,6 +300,7 @@ TEST(ResponseHeaders, P7_allowlist_and_request_id) {
                                      {"Cache-Control", "no-cache"},
                                      {"Retry-After", "3"},
                                      {"retry-after-ms", "3000"},
+                                     {"x-should-retry", "false"},
                                      {"X-LLMGW-Upstream-Request-Id", "req-1"}};
   EXPECT_EQ(filter_response_headers(in), expected);
   EXPECT_EQ(filter_response_headers({{"Request-Id", "r2"}}),

@@ -68,6 +68,12 @@ class Server {
   std::unique_ptr<Impl> impl_;
 };
 
+/// 监听地址 host 解析出来的地址是不是本机地址（127.0.0.0/8、::1，以及 IPv4 映射的 ::ffff:127.x）。
+/// 解析方式与 Server::start 绑定时相同（被动解析，取第一个结果），所以判断的就是实际要绑定的地址：
+/// 只看字符串时，主机名 127.evil.example 可以被 /etc/hosts 解析成 0.0.0.0（任务 1.9 独立审查 #1）。
+/// 解析失败时返回错误。只在启动时调用（会阻塞）。
+[[nodiscard]] Result<bool> listen_address_is_loopback(const std::string& host);
+
 /// 把进程的文件描述符表预扩容到 RLIMIT_NOFILE。
 /// 必须在创建任何线程之前调用：多线程进程每次扩容 fd 表都要等一个 RCU 宽限期，
 /// 建连高峰期会让事件循环卡顿约 10 ms（任务 0.7 发现，ADR-006 结论 4）。
