@@ -1,0 +1,121 @@
+# 发布（任务 1.10）：推送 v* tag 时构建 Linux x86_64 二进制和镜像，创建 GitHub Release，镜像推送到 ghcr.io。
+# 手动运行（workflow_dispatch）只构建和检查、不发布，构建结果作为构件上传，用于验证这个流程本身。
+#
+# 打 tag 之前：先把 CMakeLists.txt 中 project(VERSION) 改成要发布的版本（tag 必须是 v<版本>），并且该提交已合并到 main。
+#
+# 二进制取自镜像的构建阶段（Ubuntu 24.04），所以二进制与镜像完全一致；运行需要 glibc ≥ 2.39 和 OpenSSL 3。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # 创建 Release
+      packages: write   # 推送镜像到 ghcr.io
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # 只发布已经合并到 main 的提交（这些提交都经过了 PR 和 CI 的全部检查）
+      - name: Tagged commit is on main
+        if: env.PUBLISH == 'true'
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Build the build stage and the runtime image
+        run: |
+          docker build --target build -t llmgw-build:release .
+          docker build -t llmgw:release .
+
+      - name: Extract and check the binary
+        id: bin
+        run: |
+          cid=$(docker create llmgw-build:release)
+          docker cp "$cid":/src/build/src/app/llmgw ./llmgw
+          docker cp "$cid":/src/build/THIRD_PARTY_LICENSES ./THIRD_PARTY_LICENSES
+          docker rm "$cid"
+          version=$(./llmgw version | awk '{print $2}')
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # tag 必须与程序自报的版本一致（版本号在 CMakeLists.txt 的 project() 中）
+          if [ "$PUBLISH" = true ] && [ "${GITHUB_REF_NAME}" != "v$version" ]; then
+            echo "tag ${GITHUB_REF_NAME} 与 llmgw version 报告的 $version 不一致"; exit 1
+          fi
+          ./llmgw check -c config/llmgw.example.json --skip-env
+
+      - name: Package
+        id: pkg
+        run: |
+          name="llmgw-${{ steps.bin.outputs.version }}-linux-x86_64"
+          mkdir -p "dist/$name"
+          cp llmgw LICENSE NOTICE THIRD_PARTY_LICENSES README.md README.en.md "dist/$name/"
+          cp config/llmgw.example.json "dist/$name/llmgw.example.json"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" && sha256sum -c "$name.tar.gz.sha256")
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Image starts (refuses without --allow-unauthenticated)
+        run: |
+          set +e
+          out=$(docker run --rm -e OPENAI_API_KEY=x -e MINIMAX_API_KEY=x -e MIMO_API_KEY=x llmgw:release 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          test "$rc" = 1
+
+      - name: Upload build (dry run)
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.name }}
+          path: dist/${{ steps.pkg.outputs.name }}.tar.gz*
+
+      - name: Push image
+        if: env.PUBLISH == 'true'
+        env:
+          VERSION: ${{ steps.bin.outputs.version }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag llmgw:release "$IMAGE:$VERSION"
+          docker push "$IMAGE:$VERSION"
+          # 0.x 和带后缀的版本（-rc 等）不更新 latest
+          case "$VERSION" in
+            0.*|*-*) ;;
+            *) docker tag llmgw:release "$IMAGE:latest" && docker push "$IMAGE:latest" ;;
+          esac
+
+      - name: Create GitHub Release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.bin.outputs.version }}
+          NAME: ${{ steps.pkg.outputs.name }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          prerelease=""
+          case "$VERSION" in 0.*|*-*) prerelease="--prerelease" ;; esac
+          cat > notes.md <<EOF
+          Linux x86_64 binary (built on Ubuntu 24.04; requires glibc ≥ 2.39 and OpenSSL 3) and image \`$IMAGE:$VERSION\`.
+
+          Verify: \`sha256sum -c $NAME.tar.gz.sha256\`
+
+          See [docs/usage.md](https://github.com/${{ github.repository }}/blob/${GITHUB_REF_NAME}/docs/usage.md) for how to run it.
+          EOF
+          gh release create "$GITHUB_REF_NAME" "dist/$NAME.tar.gz" "dist/$NAME.tar.gz.sha256" \
+            --title "llmgw $VERSION" --notes-file notes.md --generate-notes $prerelease

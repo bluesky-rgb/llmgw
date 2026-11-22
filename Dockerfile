@@ -3,14 +3,15 @@
 # ---- 构建阶段 ----------------------------------------------------------------
 FROM ubuntu:24.04 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential cmake ninja-build git ca-certificates libssl-dev \
+      build-essential cmake ninja-build git ca-certificates libssl-dev python3 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
 RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DLLMGW_BUILD_TESTS=OFF -DLLMGW_BUILD_PROTOTYPE=OFF \
     && cmake --build build --target llmgw_app \
-    && ./build/src/app/llmgw check -c config/llmgw.example.json --skip-env
+    && ./build/src/app/llmgw check -c config/llmgw.example.json --skip-env \
+    && python3 tools/third_party_licenses.py build build/THIRD_PARTY_LICENSES
 
 # ---- 运行阶段 ----------------------------------------------------------------
 FROM ubuntu:24.04
@@ -20,6 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --no-create-home llmgw
 COPY --from=build /src/build/src/app/llmgw /usr/local/bin/llmgw
 COPY config/llmgw.example.json /etc/llmgw/llmgw.json
+COPY LICENSE NOTICE /usr/share/doc/llmgw/
+COPY --from=build /src/build/THIRD_PARTY_LICENSES /usr/share/doc/llmgw/
+LABEL org.opencontainers.image.source="https://github.com/bluesky-rgb/llmgw" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.description="LLM gateway: OpenAI-compatible API, failover, billing-safe retries"
 USER llmgw
 # 数据面、观测面（/health、/ready）
 EXPOSE 8080 9100

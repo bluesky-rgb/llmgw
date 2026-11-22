@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/bluesky-rgb/llmgw/actions/workflows/ci.yml/badge.svg)](https://github.com/bluesky-rgb/llmgw/actions/workflows/ci.yml)
 
+**中文** | [English](README.en.md)
+
 > **一个不会让你多花钱、也不会掉线的大模型网关。**
 > 开源 · 自部署 · 单个二进制
 
@@ -9,17 +11,17 @@ llmgw 把 OpenAI（GPT）、MiniMax、小米 MiMo 以及本地 llama.cpp 等多�
 
 ![三大支柱](docs/images/17-value-pillars.svg)
 
-> **项目状态：** v0.2 Alpha：新架构已经可以运行（[使用手册](docs/usage.md)）——OpenAI 兼容接口、故障切换、不会重复扣费的重试规则、四种超时、连接池、背压。**还没有客户端鉴权、限流和预算**（v0.3），请只在本机或可信网络中使用。v1.0 计划 1 月发布（[落地计划](docs/roadmap.md)）。产品定位、目标用户和开源策略见 [产品定义](docs/product.md)。
+> **项目状态：** v0.2 Alpha（开发中，尚未发布；目前的程序版本号是 0.1.0）：新架构已经可以运行（[使用手册](docs/usage.md)）——OpenAI 兼容接口、故障切换、不会重复扣费的重试规则、四种超时、连接池、背压。**还没有客户端鉴权、限流和预算**（v0.3），请只在本机或可信网络中使用；数据面监听非本机地址时，`llmgw serve` 默认拒绝启动，除非显式加 `--allow-unauthenticated`。v1.0 计划 1 月发布（[落地计划](docs/roadmap.md)）。产品定位、目标用户和开源策略见 [产品定义](docs/product.md)。
 
 ## 解决什么问题
 
-| 问题 | llmgw 的做法 |
-|---|---|
-| 各家模型的接口不统一 | 对外只提供一个 OpenAI 兼容接口，现有 SDK 改一下 `base_url` 就能用；各家的参数差异由网关按目标处理 |
-| 某一家宕机或限流，业务就挂了 | 按模型配置备用链路，自动切换；连续失败的上游会被熔断；**按规则重试，不会重复扣费** |
-| 费用失控 | 按 key 统计 Token 和费用，设置日、月预算，超出时拒绝或降级到便宜的模型 |
-| 上游 key 散落在各个应用里 | 应用只拿网关的 key，上游的真实 key 只保存在网关上 |
-| 看不到运行情况 | Prometheus 指标（包括首字延迟 TTFT）、JSON 日志、Grafana 看板 |
+| 问题 | llmgw 的做法 | 可用 |
+|---|---|---|
+| 各家模型的接口不统一 | 对外只提供一个 OpenAI 兼容接口，现有 SDK 改一下 `base_url` 就能用；各家的参数差异由网关按目标处理 | ✅ v0.2 |
+| 某一家宕机或限流，业务就挂了 | 按模型配置备用链路，自动切换；**按规则重试，不会重复扣费**（可能已扣费的结果不重试，并告诉 SDK 也不要重试）；连续失败的上游会被熔断（v0.3） | ✅ v0.2 |
+| 费用失控 | 按 key 统计 Token 和费用，设置日、月预算，超出时拒绝或降级到便宜的模型 | v0.3 |
+| 上游 key 散落在各个应用里 | 应用只拿网关的 key，上游的真实 key 只保存在网关上 | v0.3（网关 key） |
+| 看不到运行情况 | Prometheus 指标（包括首字延迟 TTFT）、JSON 日志、Grafana 看板 | v0.3 |
 
 **为什么用 C++？** 性能是我们的第二卖点。流式输出一条连接要挂一两分钟，网关真正的压力是**大量的长连接**。C++ 加协程可以让单机撑住上万条并发流，每条流只占几十 KB 内存，没有 GC 停顿，部署时也不需要任何语言运行时。详见[设计文档 1.2 节](docs/design.md#12-定位)。
 
@@ -50,11 +52,11 @@ llmgw 把 OpenAI（GPT）、MiniMax、小米 MiMo 以及本地 llama.cpp 等多�
 
 ## 客户端怎么接入
 
-**不需要额外的 SDK**：OpenAI 官方 SDK、LangChain、Dify 等任何支持 OpenAI 接口的工具，把 `base_url` 换成网关地址、`api_key` 换成网关 key 即可。
+**不需要额外的 SDK**：OpenAI 官方 SDK、LangChain、Dify 等任何支持 OpenAI 接口的工具，把 `base_url` 换成网关地址即可（v0.3 起 `api_key` 换成网关 key）。
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://llmgw.internal:8080/v1", api_key="sk-gw-...")
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="unused")  # 网关 key 在 v0.3 提供
 client.chat.completions.create(model="smart", messages=[{"role": "user", "content": "你好"}])
 ```
 
@@ -80,6 +82,13 @@ curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/jso
 ```
 
 `smart` 会先用 GPT，失败后依次切换到 MiniMax、MiMo；**请求可能已经被上游扣费时不会重试**。配置字段、切换规则、接入本地 llama.cpp、Docker 等详见 [使用手册](docs/usage.md)。
+
+## 提问与贡献
+
+- **使用问题、想法**：[GitHub Discussions](https://github.com/bluesky-rgb/llmgw/discussions)
+- **Bug**：[提交 Issue](https://github.com/bluesky-rgb/llmgw/issues/new/choose)（使用 Bug 模板）
+- **安全问题**：请私下报告，见 [SECURITY.md](SECURITY.md)
+- **贡献代码**：[CONTRIBUTING.md](CONTRIBUTING.md)（构建、测试、设计评审流程、DCO 签名）和 [行为准则](CODE_OF_CONDUCT.md)
 
 ## 文档导航
 

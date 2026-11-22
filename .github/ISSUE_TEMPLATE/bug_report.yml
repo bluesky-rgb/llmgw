@@ -1,0 +1,63 @@
+name: 缺陷报告 / Bug report
+description: llmgw 的行为与文档不一致、崩溃、错误的响应 / Something does not work as documented.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告。**请不要贴出 API key、代理密码或请求中的敏感内容**（配置中的 key 只写环境变量名即可）。安全问题请按 [SECURITY.md](https://github.com/bluesky-rgb/llmgw/blob/main/SECURITY.md) 私下报告。
+        Thanks for reporting. **Do not paste API keys, proxy passwords or sensitive request content.** Report security issues privately (see [SECURITY.md](https://github.com/bluesky-rgb/llmgw/blob/main/SECURITY.md)).
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / Version
+      description: "`llmgw version` 的输出，或提交号 / Output of `llmgw version`, or the commit."
+      placeholder: llmgw 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: 运行方式 / How do you run it
+      options:
+        - 源码构建 / Built from source
+        - Docker 镜像 / Docker image
+        - 发布的二进制 / Release binary
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么 / What happened
+      description: 实际的行为，包括状态码、错误信息、相关的日志 / Actual behavior, including status code, error message and relevant logs.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望的行为 / Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 请求（例如 curl 命令）、上游是哪家供应商、怎样触发 / The request (e.g. curl), which upstream provider, how to trigger it.
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: 配置 / Configuration
+      description: 最小的配置文件。key 只写环境变量名，不要写 key 本身 / Minimal config. Only environment variable names, never the keys themselves.
+      render: json
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境 / Environment
+      description: 操作系统、编译器版本（源码构建时）/ OS, compiler version (if built from source).
+    validations:
+      required: false

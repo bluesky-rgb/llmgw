@@ -167,6 +167,21 @@ jobs:
           docker logs gw
           docker stop gw
 
+  # DCO：来自 fork 的 PR，每个提交都要有 Signed-off-by（见 CONTRIBUTING.md；维护者的提交不检查的原因也写在那里）
+  dco:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    name: dco
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check Signed-off-by
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 tools/check_dco.py "$BASE" "$HEAD"
+
   security:
     name: security
     runs-on: ubuntu-24.04

@@ -5,3 +5,8 @@ cmake-build-*/
 config.json
 *.log
 .deps/
+# 本地配置和密钥（README 的快速开始会在仓库根目录创建 llmgw.json）
+llmgw.json
+llmgw.*.json
+.env
+.env.*
