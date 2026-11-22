@@ -111,9 +111,13 @@ class Session {
   // 协程参数一律按值传递（code-architecture.md 3.4）。每次写都与 write_timeout 竞速：
   // 客户端不读时不能永远占住连接名额（独立审查发现的严重问题）
   /// extra：中间件附加的响应头（不允许的会被丢弃，见 plugin_header_allowed）
-  Task<bool> write_json(unsigned status, std::string body, std::string request_id, bool keep_alive,
-                        unsigned version, std::optional<Error> error = std::nullopt,
-                        std::vector<Header> extra = {});
+  struct ReplyTo {
+    std::string request_id;
+    bool keep_alive = false;
+    unsigned version = 11;
+  };
+  Task<bool> write_json(unsigned status, std::string body, ReplyTo to,
+                        std::optional<Error> error = std::nullopt, std::vector<Header> extra = {});
   Task<bool> write_error(Error error, std::string request_id, bool keep_alive, unsigned version,
                          std::vector<Header> extra = {});
   /// 回复错误后关闭连接：先关闭写方向，再丢弃对方还在发送的数据一小段时间，

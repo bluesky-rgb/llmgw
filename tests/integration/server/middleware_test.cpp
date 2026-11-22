@@ -77,15 +77,28 @@ class MiddlewareTest : public ServerTest {
  protected:
   void SetUp() override {}  // 每个用例按需要的插件行为自己启动
 
-  // “恰好一次”：Server 销毁（所有 Session 都结束）之后，每个插件的 on_request 次数都等于
-  // on_complete 次数。在 TearDown 中检查，迟到的重复调用也能发现（独立审查 2.1）
+  // “恰好一次”：每个插件的 on_request 次数最终都等于 on_complete 次数。
+  // 1. 先等进行中的请求都执行完 on_complete：响应写完之后 on_complete
+  // 才执行，用例读完响应就结束了；
+  //    这时直接销毁 Server 属于“进程退出”这个有文档的例外（第一版没有等，CI 的检测器构建中失败）
+  // 2. 再销毁 Server（所有 Session 都结束），再检查一次：迟到的重复调用也能发现（独立审查 2.1）
   void TearDown() override {
+    if (exactly_once_) {
+      EXPECT_TRUE(eventually([&] { return balanced(); })) << log_->summary();
+    }
     server_.reset();
     if (!exactly_once_) return;
     for (const std::string name : {"a", "b", "c"}) {
       EXPECT_EQ(log_->count(name, "request"), log_->count(name, "complete"))
           << name << "：" << log_->summary();
     }
+  }
+
+  [[nodiscard]] bool balanced() const {
+    for (const std::string name : {"a", "b", "c"}) {
+      if (log_->count(name, "request") != log_->count(name, "complete")) return false;
+    }
+    return true;
   }
 
   // 启动 Server：链上依次是 plugins 中的插件（每个 Worker 一份实例，共用一个调用日志）

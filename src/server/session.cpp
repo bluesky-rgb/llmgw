@@ -183,7 +183,9 @@ Task<bool> Session::handle(Request request) {
                            keep_alive, version);
       co_return keep_alive;
     }
-    co_return co_await write_json(200, models_body(*worker_->config), id, keep_alive, version) &&
+    co_return co_await write_json(
+        200, models_body(*worker_->config),
+        ReplyTo{.request_id = id, .keep_alive = keep_alive, .version = version}) &&
         keep_alive;
   }
   co_await write_error(
@@ -193,12 +195,11 @@ Task<bool> Session::handle(Request request) {
   co_return keep_alive;
 }
 
-Task<bool> Session::write_json(unsigned status, std::string body, std::string request_id,
-                               bool keep_alive, unsigned version, std::optional<Error> error,
-                               std::vector<Header> extra) {
-  http::response<http::string_body> res{static_cast<http::status>(status), version};
+Task<bool> Session::write_json(unsigned status, std::string body, ReplyTo to,
+                               std::optional<Error> error, std::vector<Header> extra) {
+  http::response<http::string_body> res{static_cast<http::status>(status), to.version};
   res.set(http::field::content_type, "application/json");
-  res.set("X-Request-Id", request_id);
+  res.set("X-Request-Id", to.request_id);
   if (error) {
     res.set("x-should-retry", should_retry(error->code) ? "true" : "false");
     if (error->retry_after) {
@@ -212,7 +213,7 @@ Task<bool> Session::write_json(unsigned status, std::string body, std::string re
   for (const Header& h : extra) {  // 网关自己的头都不允许被插件替换，所以直接插入
     if (plugin_header_allowed(h.name, h.value)) res.insert(h.name, h.value);
   }
-  res.keep_alive(keep_alive);
+  res.keep_alive(to.keep_alive);
   res.body() = std::move(body);
   res.prepare_payload();
   // 与 write_timeout 竞速：客户端不读时，不能永远占住连接名额
@@ -226,8 +227,10 @@ Task<bool> Session::write_error(Error error, std::string request_id, bool keep_a
                                 unsigned version, std::vector<Header> extra) {
   const auto status = static_cast<unsigned>(http_status(error.code));
   std::string body = error_body(error);
-  co_return co_await write_json(status, std::move(body), std::move(request_id), keep_alive, version,
-                                std::move(error), std::move(extra));
+  co_return co_await write_json(
+      status, std::move(body),
+      ReplyTo{.request_id = std::move(request_id), .keep_alive = keep_alive, .version = version},
+      std::move(error), std::move(extra));
 }
 
 Task<> Session::reject_and_close(Error error, std::string reason_label, std::string request_id,
