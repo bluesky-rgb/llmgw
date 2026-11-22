@@ -52,28 +52,36 @@ class Middleware {
   virtual Task<> on_complete(const RequestContext* ctx) = 0;
 };
 
-// 插件工厂：全局一个，负责校验配置、为每个 Worker 创建实例
+// 插件工厂：每种插件一个，负责校验配置、为每个 Worker 创建实例。spec.config_json 是配置中
+// 这个插件的 "config" 对象的 JSON 文本，插件在自己的 .cpp 中解析（只在启动时）
 class MiddlewareFactory {
  public:
   virtual ~MiddlewareFactory() = default;
   virtual std::string_view name() const = 0;                 // 配置里用的名字
-  virtual Result<void> validate(const Json& cfg) const = 0;
-  virtual std::unique_ptr<Middleware> create(const Json& cfg, WorkerContext& w) const = 0;
+  virtual std::string_view description() const = 0;          // llmgw plugins 中显示
+  virtual std::vector<config::Issue> validate(const PluginSpec& spec, const config::Snapshot&) const = 0;
+  virtual std::unique_ptr<Middleware> create(const PluginSpec& spec, const config::Snapshot&,
+                                             const WorkerResources& w) const = 0;
 };
 
-// 编译期注册：链接进二进制时自动登记到注册表
-LLMGW_REGISTER_MIDDLEWARE(RateLimitFactory);
+// 显式登记（ADR-009）：内置插件在 middleware::register_builtin() 中逐个列出
+Result<void> register_builtin(Registry* registry) {
+  if (auto r = registry->add(std::make_unique<RateLimitFactory>()); !r) return r;  // 登记失败不能被忽略
+  return {};
+}
 ```
+
+实际的接口见 `src/middleware/include/llmgw/middleware/middleware.h`（任务 2.1）。
 
 | 约定 | 说明 |
 |---|---|
 | **异步** | 所有可能等待的接口都返回 `awaitable`，插件可以在里面访问 Redis 等外部服务而不阻塞线程 |
 | **不阻塞** | 插件里不能有阻塞调用；确实需要时，通过 `WorkerContext` 提交到 `BlockingPool` |
 | **每个 Worker 一个实例** | 工厂为每个 Worker 调用一次 `create`。实例只被一个线程访问，所以不需要加锁 |
-| **共享状态只能走 `StateStore`** | 需要跨 Worker 共享的数据（比如预算），必须通过 `StateStore`，不能自己用全局变量 |
+| **共享状态由工厂注入** | 需要跨 Worker 共享的数据（比如预算），由工厂在 `create` 时注入同一个线程安全的对象（`shared_ptr`；以后是 `StateStore`），不能自己用全局变量（ADR-009） |
 | **配置先校验** | 加载或热加载配置时，先调用 `validate`；任何一个插件校验失败，整份配置都不生效 |
 | **错误用返回值** | 用 `Result<T>` 或 `Decision` 返回错误；热路径上不抛异常 |
-| **一定会收尾** | 只要 `on_request` 被调用过，`on_complete` 就一定会被调用，插件可以放心地在这里释放资源、结算预算 |
+| **一定会收尾** | 只要 `on_request` 被调用过，`on_complete` 就一定会被调用（包括被拒绝、抛异常、客户端断开、超时），插件可以放心地在这里释放资源、结算预算。`on_complete` 不会被客户端断开取消，但整个阶段限时 5 秒，不能等待没有上限的 I/O。两个例外：限时到了时，还没有执行 `on_complete` 的插件不再执行；进程退出时还在进行的请求（见任务 2.1 的设计） |
 
 ## 5. 配置驱动组装
 
@@ -92,7 +100,7 @@ LLMGW_REGISTER_MIDDLEWARE(RateLimitFactory);
 
 - `pipeline` 的顺序就是中间件的执行顺序；`on_complete` 按相反的顺序执行
 - 配置中出现了没有注册的插件名，启动时直接报错，并列出所有可用的插件
-- `llmgw --list-plugins` 可以列出当前二进制里注册的所有插件及其版本
+- `llmgw plugins` 列出当前二进制里注册的所有插件及其说明
 
 ## 6. 为什么不做动态加载（`.so` 插件）
 
@@ -117,7 +125,7 @@ v1.0 只支持**编译期注册**，插件和网关一起编译成一个二进�
 
 1. 实现 `ProviderAdapter`：请求转换、响应转换、流式事件转换
 2. 录制真实的请求和响应样本，写成单元测试
-3. 用 `LLMGW_REGISTER_PROVIDER` 注册
+3. 在注册表中显式登记（与中间件相同，ADR-009）
 4. 在配置中把 `providers[].protocol` 设为新协议的名字
 
 ## 8. 兼容性与版本

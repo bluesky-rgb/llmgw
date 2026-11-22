@@ -99,10 +99,11 @@ struct Usage {
 
 /// 请求的终态分类。
 enum class OutcomeKind : std::uint8_t {
-  kPending,        ///< 还没有结束
-  kSuccess,        ///< 完整返回了响应
-  kRejected,       ///< 被中间件拒绝（401、429、402 …）
-  kFailed,         ///< 网关或上游错误，没有返回完整结果
+  kPending,   ///< 还没有结束
+  kSuccess,   ///< 完整返回了响应
+  kRejected,  ///< 被中间件拒绝（401、429、402 …，以及插件给出的任何状态码），或者网关返回了
+              ///< 4xx（模型不存在等）：请求没有被处理
+  kFailed,    ///< 网关或上游错误，没有返回完整结果
   kClientAborted,  ///< 客户端在完成之前断开
   kTimeout,        ///< 总超时或空闲超时
 };

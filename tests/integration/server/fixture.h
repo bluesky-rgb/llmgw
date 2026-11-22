@@ -45,6 +45,8 @@ struct Probe {
 ///   big         64 KB × 200 块（背压）  medium   每 50 ms 一块，共 5 块
 ///   nextthrow   1 块之后 next() 抛异常   badstatus 状态码 1000（不合法）
 ///   stall_short_idle  同 stall，但 ctx->upstream_idle = 300 ms（目标自己的空闲超时）
+///   status:N    上游原样返回状态码 N（1 块）  upstream_ratelimit  响应头带 x-ratelimit-remaining:
+///   99
 class FakeDispatcher final : public Dispatcher {
  public:
   FakeDispatcher(WorkerInfo info, std::shared_ptr<Probe> probe)
@@ -64,7 +66,9 @@ class ServerTest : public ::testing::Test {
  protected:
   void SetUp() override { start(test_config()); }
   void TearDown() override { server_.reset(); }
-  void start(std::shared_ptr<config::Snapshot> cfg);
+  void start(std::shared_ptr<config::Snapshot> cfg, ChainFactory chain = {},
+             std::chrono::milliseconds complete_timeout = std::chrono::milliseconds(5000),
+             MetricsFactory metrics = {});
 
   std::shared_ptr<Probe> probe_ = std::make_shared<Probe>();
   std::unique_ptr<Server> server_;

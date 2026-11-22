@@ -23,13 +23,24 @@ void report(const std::exception_ptr& e, const char* where) {
 
 Worker::Worker(unsigned index, unsigned worker_count,
                std::shared_ptr<const config::Snapshot> config, SharedState* shared,
-               const DispatcherFactory& dispatcher_factory, const MetricsFactory& metrics_factory)
+               const ServerOptions& options)
     : ioc_(std::make_unique<asio::io_context>(1)) {
   const WorkerInfo info{
       .index = index, .worker_count = worker_count, .executor = ioc_->get_executor()};
-  dispatcher_ = dispatcher_factory(info);
-  metrics_ = metrics_factory ? metrics_factory(info) : nullptr;
+  dispatcher_ = options.dispatcher_factory(info);
+  metrics_ = options.metrics_factory ? options.metrics_factory(info) : nullptr;
   if (!metrics_) metrics_ = std::make_unique<NullMetricsRecorder>();
+  if (options.chain_factory) {
+    auto chain = options.chain_factory(info, metrics_.get());
+    if (chain) {
+      chain_ = std::move(*chain);
+    } else {
+      init_error_ = chain.error();
+    }
+  }
+  // 空的链等同于没有链：Session 不需要为它做任何事（热路径上没有额外开销）
+  context_.chain = chain_ != nullptr && !chain_->empty() ? chain_.get() : nullptr;
+  context_.complete_timeout = options.middleware_complete_timeout;
   context_.index = index;
   context_.config = std::move(config);
   context_.dispatcher = dispatcher_.get();
@@ -46,6 +57,7 @@ Worker::~Worker() {
   }
   acceptor_.reset();
   dispatcher_.reset();  // 先于 io_context 销毁，见头文件中的说明
+  chain_.reset();
   ioc_.reset();
 }
 

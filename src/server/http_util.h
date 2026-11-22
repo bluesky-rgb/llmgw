@@ -61,4 +61,9 @@ bool is_plain_chunked(std::string_view transfer_encoding);
 /// 逐跳（hop-by-hop）的响应头：转发上游的响应头时要去掉，由网关自己决定。
 bool is_hop_by_hop(std::string_view header_name);
 
+/// 中间件附加的响应头能否写出：必须是合法的响应头（safe_header），不能是逐跳的头，也不能是网关自己
+/// 决定的头（Content-Type、X-Request-Id、x-should-retry、Retry-After 等：限流插件要给出 Retry-After
+/// 时用 Error::retry_after）。
+bool plugin_header_allowed(std::string_view name, std::string_view value);
+
 }  // namespace llmgw::server::detail

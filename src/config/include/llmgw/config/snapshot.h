@@ -158,6 +158,17 @@ struct ModelConfig {
   std::vector<TargetConfig> targets;  ///< 按顺序切换，不为空
 };
 
+/// 中间件链中的一项（任务 2.1）。插件名是否存在、插件自己的配置是否正确，由 middleware 模块校验
+/// （config 不依赖 middleware，不知道有哪些插件）。
+struct PipelineEntry {
+  std::string name;
+  /// 这一项的 "config" 对象的 JSON 文本，没有写时为 "{}"。插件在自己的实现中解析（只在启动时）
+  std::string config_json = "{}";
+  std::string path;  ///< 在配置文件中的位置，比如 "pipeline[1]"（错误提示用）
+
+  friend bool operator==(const PipelineEntry&, const PipelineEntry&) = default;
+};
+
 /// 完整的配置快照。
 struct Snapshot {
   ServerConfig server;
@@ -167,6 +178,8 @@ struct Snapshot {
   UpstreamConfig upstream;
   RetryConfig retry;
   std::vector<ModelConfig> models;
+  /// 中间件链，按执行顺序（on_complete 按相反的顺序）。为空表示不启用任何中间件
+  std::vector<PipelineEntry> pipeline;
 
   /// 按名字查找；找不到返回 nullptr。返回的指针与快照的生命周期相同。
   [[nodiscard]] const Provider* find_provider(std::string_view name) const;

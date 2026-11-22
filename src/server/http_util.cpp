@@ -164,4 +164,12 @@ bool is_hop_by_hop(std::string_view name) {
                      [&](std::string_view h) { return iequals(h, name); });
 }
 
+bool plugin_header_allowed(std::string_view name, std::string_view value) {
+  static constexpr std::array<std::string_view, 6> kGatewayOwned{
+      "content-type", "x-request-id", "x-should-retry", "retry-after", "retry-after-ms", "allow"};
+  return safe_header(name, value) && !is_hop_by_hop(name) &&
+         std::none_of(kGatewayOwned.begin(), kGatewayOwned.end(),
+                      [&](std::string_view h) { return iequals(h, name); });
+}
+
 }  // namespace llmgw::server::detail

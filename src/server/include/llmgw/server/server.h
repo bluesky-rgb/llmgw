@@ -5,6 +5,7 @@
 #pragma once
 
 #include <boost/asio/any_io_executor.hpp>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -12,6 +13,7 @@
 #include "llmgw/config/snapshot.h"
 #include "llmgw/core/metrics.h"
 #include "llmgw/core/result.h"
+#include "llmgw/middleware/chain.h"
 #include "llmgw/server/dispatcher.h"
 
 namespace llmgw::server {
@@ -26,6 +28,10 @@ struct WorkerInfo {
 
 using DispatcherFactory = std::function<std::unique_ptr<Dispatcher>(const WorkerInfo&)>;
 using MetricsFactory = std::function<std::unique_ptr<MetricsRecorder>(const WorkerInfo&)>;
+/// 为每个 Worker 创建一条中间件链（任务 2.1）。metrics 是这个 Worker 的指标实现，生命周期长于链。
+/// 返回错误时 Server::start() 失败。
+using ChainFactory = std::function<Result<std::unique_ptr<middleware::Chain>>(
+    const WorkerInfo&, MetricsRecorder* metrics)>;
 
 struct ServerOptions {
   /// 监听地址、上限、超时都从这里读取。端口写 0 时由系统分配（测试使用）。
@@ -34,6 +40,11 @@ struct ServerOptions {
   DispatcherFactory dispatcher_factory;
   /// 为每个 Worker 创建一个 MetricsRecorder。可选，默认 NullMetricsRecorder。
   MetricsFactory metrics_factory;
+  /// 为每个 Worker 创建中间件链。可选，默认没有中间件。
+  ChainFactory chain_factory;
+  /// 整个 on_complete 阶段（所有插件加起来）的时限：超过时取消、关闭连接（middleware.h 中的约定）。
+  /// 只有测试需要改它
+  std::chrono::milliseconds middleware_complete_timeout{5000};
 };
 
 class Server {

@@ -1,7 +1,7 @@
 # 模块 server：接入层（任务 1.3）
 llmgw_add_module(server
   SOURCES server.cpp worker.cpp session.cpp relay.cpp control_plane.cpp http_util.cpp
-  DEPS core config)
+  DEPS core config middleware)
 
 find_package(Threads REQUIRED)
 llmgw_fetch_dependency(boost)

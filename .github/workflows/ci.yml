@@ -68,7 +68,7 @@ jobs:
       - name: clang-format
         if: always()
         run: |
-          files=$(find src tests/unit tests/integration tests/fuzz -name '*.cpp' -o -name '*.h' -o -name '*.hpp')
+          files=$(find src tests/unit tests/integration tests/fuzz tests/common -name '*.cpp' -o -name '*.h' -o -name '*.hpp')
           if [ -n "$files" ]; then clang-format-18 --dry-run --Werror $files; fi
       - name: Cache third-party sources
         if: always()

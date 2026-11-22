@@ -53,6 +53,7 @@
 | | `llmgw_retry_budget_exhausted_total` | — |
 | | `llmgw_bulkhead_rejected_total` | `provider` |
 | | `llmgw_degraded` | `feature` |
+| | `llmgw_middleware_errors_total` | `plugin`, `stage`（on_request / on_complete：抛异常；complete_timeout：on_complete 超时） |
 | **业务** | `llmgw_tokens_total` | `model`, `provider`, `type`（prompt / completion / reasoning） |
 | | `llmgw_cost_usd_total` | `model`, `provider` |
 | | `llmgw_budget_used_ratio` | `key_id` |

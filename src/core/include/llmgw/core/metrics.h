@@ -23,6 +23,9 @@ enum class Counter : std::uint8_t {
   kRejected,            ///< server 等：请求被拒绝（过载、过大 …）
   /// upstream：每次从连接池取连接的结果（kind = reused / new / queue_timeout），复用率由此算出
   kUpstreamConnections,
+  /// middleware：插件出错（stage = on_request / on_complete 抛异常，complete_timeout 为 on_complete
+  /// 超时）
+  kMiddlewareErrors,
 };
 
 /// 直方图（固定分桶，由实现决定）。
@@ -59,6 +62,7 @@ inline constexpr std::array<std::string_view, 2> kProviderState{"provider", "sta
 inline constexpr std::array<std::string_view, 2> kProviderKind{"provider", "kind"};
 inline constexpr std::array<std::string_view, 1> kReason{"reason"};
 inline constexpr std::array<std::string_view, 1> kWorker{"worker"};
+inline constexpr std::array<std::string_view, 2> kPluginStage{"plugin", "stage"};
 }  // namespace metric_labels
 
 // 目录的顺序必须与枚举的顺序一致（下面的 static_assert 检查）。
@@ -76,6 +80,10 @@ inline constexpr std::array kCounterCatalog{
         Counter::kUpstreamConnections,
         {"llmgw_upstream_connections_total", "从连接池取连接的次数：复用、新建、排队超时",
          metric_labels::kProviderKind}},
+    CatalogEntry<Counter>{
+        Counter::kMiddlewareErrors,
+        {"llmgw_middleware_errors_total", "中间件插件出错的次数：抛异常、on_complete 超时",
+         metric_labels::kPluginStage}},
 };
 
 inline constexpr std::array kHistogramCatalog{
