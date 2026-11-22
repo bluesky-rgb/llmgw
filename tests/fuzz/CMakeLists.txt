@@ -29,3 +29,5 @@ target_include_directories(llmgw_fuzz_upstream_response PRIVATE "${CMAKE_SOURCE_
 # SSE 解析器（任务 1.5）：切块方式不影响结果
 llmgw_fuzz_target(sse SOURCES sse_fuzz.cpp LIBS llmgw::stream)
 target_include_directories(llmgw_fuzz_sse PRIVATE "${CMAKE_SOURCE_DIR}/src/stream")
+# 请求体改写（任务 1.6）：输出是合法的 JSON，并且满足每一条规则；用 simdjson DOM 独立检查
+llmgw_fuzz_target(rewrite SOURCES rewrite_fuzz.cpp LIBS llmgw::provider llmgw::config simdjson::simdjson)

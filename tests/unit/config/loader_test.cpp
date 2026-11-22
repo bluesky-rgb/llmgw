@@ -509,3 +509,106 @@ TEST(Secrets, api_key_never_appears_in_issues) {
 
 }  // namespace
 }  // namespace llmgw::config
+
+// 任务 1.6 补充的校验：改写的路径
+namespace llmgw::config {
+namespace {
+
+TEST(Rewrites, valid_rules_are_accepted) {
+  auto r = parse(minimal("", "",
+                         R"(, "drop_fields": ["messages[].reasoning_content", "thinking"],
+                              "rename_fields": {"max_tokens": "max_completion_tokens", "messages[].a": "messages[].b"},
+                              "set_fields": {"stream_options.include_usage": true, "reasoning_effort": "medium"})"),
+                 skip_env());
+  ASSERT_TRUE(r.ok()) << dump(r);
+  const auto& t = r.snapshot->find_model("smart")->targets[0];
+  EXPECT_EQ(t.drop_fields.size(), 2U);
+  EXPECT_EQ(t.rename_fields.size(), 2U);
+  EXPECT_EQ(t.set_fields.size(), 2U);
+}
+
+TEST(Rewrites, rename_must_stay_in_the_same_object) {
+  expect_error(minimal("", "", R"(, "rename_fields": {"messages[].a": "b"})"),
+               "models[0].targets[0].rename_fields.messages[].a");
+  expect_error(minimal("", "", R"(, "rename_fields": {"a.b": "c.b"})"),
+               "models[0].targets[0].rename_fields.a.b");
+}
+
+TEST(Rewrites, model_and_stream_are_managed_by_the_gateway) {
+  expect_error(minimal("", "", R"(, "drop_fields": ["model"])"),
+               "models[0].targets[0].drop_fields[0]");
+  expect_error(minimal("", "", R"(, "set_fields": {"stream": false})"),
+               "models[0].targets[0].set_fields.stream");
+  expect_error(minimal("", "", R"(, "rename_fields": {"x": "model"})"),
+               "models[0].targets[0].rename_fields.x");
+  // 审查 1.6 #3：model.x 会把 model 替换成对象
+  expect_error(minimal("", "", R"(, "set_fields": {"model.x": 1})"),
+               "models[0].targets[0].set_fields.model.x");
+  expect_error(minimal("", "", R"(, "drop_fields": ["stream.x"])"),
+               "models[0].targets[0].drop_fields[0]");
+  auto nested = parse(minimal("", "", R"(, "set_fields": {"metadata.model": "x"})"), skip_env());
+  EXPECT_TRUE(nested.ok()) << "嵌套的 model 不受限制：" << dump(nested);
+}
+
+// 审查 1.6 #4：两条改名指向同一个目标，输出重复的键
+TEST(Rewrites, two_renames_cannot_share_a_target) {
+  expect_error(minimal("", "", R"(, "rename_fields": {"a": "c", "b": "c"})"),
+               "models[0].targets[0].rename_fields");
+}
+
+// 审查 1.6 #2：规则的路径经过改名的字段或者设置的字段时，按原名还是新名、作用于原值还是设置的值，
+// 都有歧义。加载时拒绝，要求写成一条规则
+TEST(Rewrites, rules_under_renamed_or_set_fields_are_rejected) {
+  expect_error(
+      minimal(
+          "", "",
+          R"(, "rename_fields": {"thinking": "reasoning"}, "drop_fields": ["thinking.budget"])"),
+      "models[0].targets[0].drop_fields[0]");
+  expect_error(
+      minimal(
+          "", "",
+          R"(, "rename_fields": {"thinking": "reasoning"}, "drop_fields": ["reasoning.budget"])"),
+      "models[0].targets[0].drop_fields[0]");
+  expect_error(minimal("", "", R"(, "set_fields": {"extra": {"a": 1}, "extra.b": 2})"),
+               "models[0].targets[0].set_fields.extra.b");
+  expect_error(
+      minimal("", "", R"(, "set_fields": {"extra": {"a": 1}}, "drop_fields": ["extra.a"])"),
+      "models[0].targets[0].drop_fields[0]");
+  expect_error(
+      minimal(
+          "", "",
+          R"(, "rename_fields": {"messages[].a": "messages[].b"}, "set_fields": {"messages[].a.x": 1})"),
+      "models[0].targets[0].set_fields.messages[].a.x");
+  // 同一个字段上的删除 + 设置（先删后设）、经过 messages[] 的多条规则：没有歧义
+  auto ok = parse(
+      minimal(
+          "", "",
+          R"(, "drop_fields": ["a", "messages[].x"], "set_fields": {"a": 1, "messages[].y": 2})"),
+      skip_env());
+  EXPECT_TRUE(ok.ok()) << dump(ok);
+}
+
+// 改写器的递归深度由规则的路径决定：限制路径的段数
+TEST(Rewrites, path_depth_is_limited) {
+  std::string deep = "a";
+  for (int i = 0; i < 32; ++i) deep += ".a";
+  expect_error(minimal("", "", R"(, "drop_fields": [")" + deep + R"("])"),
+               "models[0].targets[0].drop_fields[0]", "32");
+  std::string ok = "a";
+  for (int i = 1; i < 32; ++i) ok += ".a";
+  auto r = parse(minimal("", "", R"(, "drop_fields": [")" + ok + R"("])"), skip_env());
+  EXPECT_TRUE(r.ok()) << dump(r);
+}
+
+TEST(Rewrites, last_segment_cannot_be_each) {
+  expect_error(minimal("", "", R"(, "drop_fields": ["messages[]"])"),
+               "models[0].targets[0].drop_fields[0]");
+}
+
+TEST(Rewrites, error_mapping_field_cannot_be_each) {
+  expect_error(minimal("", R"(, "error_mapping": {"field": "errors[].code", "codes": {"1": 500}})"),
+               "providers[0].error_mapping.field");
+}
+
+}  // namespace
+}  // namespace llmgw::config

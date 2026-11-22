@@ -7,9 +7,14 @@ set -euo pipefail
 build_dir="${1:-build}"
 tidy="${CLANG_TIDY:-clang-tidy}"
 files=$(python3 - "$build_dir" <<'PY'
-import json, sys, os
+import json, sys, os, glob
 db = json.load(open(os.path.join(sys.argv[1], "compile_commands.json")))
 root = os.getcwd() + "/src/"
+# compile_commands.json 过期时（新加的源文件还没有重新配置），那些文件会被悄悄跳过（任务 1.6 的教训）
+known = {e["file"] for e in db}
+missing = [f for f in glob.glob("src/**/*.cpp", recursive=True) if os.path.abspath(f) not in known]
+if missing:
+    sys.exit("compile_commands.json 中没有这些源文件（先重新运行 cmake）：\n  " + "\n  ".join(sorted(missing)))
 print("\n".join(sorted({e["file"] for e in db
                          if e["file"].startswith(root) or "/header_check/" in e["file"]})))
 PY
