@@ -85,7 +85,8 @@ class Session {
   /// GET /v1/models：经过中间件链（鉴权）之后返回配置中的模型（任务 2.2）
   Task<bool> handle_models(Request request, std::string request_id);
   /// 两个接口共用：从请求中取出插件需要的信息（Bearer token、客户端地址）
-  RequestInfo make_info(const Request& request, std::string request_id, Endpoint endpoint) const;
+  [[nodiscard]] RequestInfo make_info(const Request& request, std::string request_id,
+                                      Endpoint endpoint) const;
 
   // ---- relay.cpp ----
   struct Exchange;

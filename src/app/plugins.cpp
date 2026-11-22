@@ -49,7 +49,7 @@ bool has_auth(const config::Snapshot& snapshot) {
 int keygen(const std::vector<std::string_view>& args) {
   std::string id;
   for (std::size_t i = 0; i < args.size(); ++i) {
-    if (args[i] == "--id" && i + 1 < args.size()) {
+    if (args[i] == "--id" && i + 1 < args.size() && id.empty()) {
       id = std::string(args[++i]);
     } else {
       std::fprintf(stderr, "未知参数：%s\n用法：llmgw keygen --id <名字>\n",
@@ -57,12 +57,15 @@ int keygen(const std::vector<std::string_view>& args) {
       return 2;
     }
   }
-  const bool id_ok = !id.empty() && id.size() <= 64 && std::ranges::all_of(id, [](char c) {
-    return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '-' || c == '_' || c == '.';
-  });
+  const bool id_ok =
+      !id.empty() && id.size() <= 64 && !id.starts_with("sk-") &&
+      std::ranges::all_of(id, [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '-' || c == '_' || c == '.';
+      });
   if (!id_ok) {
     std::fprintf(stderr,
-                 "用法：llmgw keygen --id <名字>\n名字只能包含字母、数字和 \"-_.\"，长度 1–64，"
+                 "用法：llmgw keygen --id <名字>\n名字只能包含字母、数字和 \"-_.\"，长度 "
+                 "1–64，不能以 sk- 开头，"
                  "比如 app-chatbot（日志和用量中用它标识 key）\n");
     return 2;
   }

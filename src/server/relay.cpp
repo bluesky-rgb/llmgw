@@ -179,7 +179,8 @@ Task<bool> Session::handle_models(Request request, std::string request_id) {
                          false, to.version, run.response_headers);
   }
   const bool completed = run.entered == 0 || co_await finish_chain(&ctx, &run);
-  co_return reuse&& completed;
+  const bool keep_connection = reuse && completed;
+  co_return keep_connection;
 }
 
 Task<bool> Session::relay(Exchange* ex) {

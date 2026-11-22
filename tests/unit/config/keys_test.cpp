@@ -62,6 +62,14 @@ TEST(Keys, plaintext_key_is_rejected_and_never_echoed) {
   auto bad = load(R"([{"id": "a", "hash": "md5:THIS_IS_A_SECRET"}])");
   EXPECT_TRUE(has_error_at(bad, "keys[0].hash", "sha256")) << all_text(bad);
   EXPECT_EQ(all_text(bad).find("THIS_IS_A_SECRET"), std::string::npos);
+  // 写在 id 里：id 会出现在日志和指标中，也要拒绝，并且重名的提示也不能回显 id（独立审查 2.2 #2）
+  auto in_id = load(R"([{"id": ")" + secret + R"(", "hash": ")" + kHash + R"("}])");
+  EXPECT_TRUE(has_error_at(in_id, "keys[0].id", "key 本身")) << all_text(in_id);
+  EXPECT_EQ(all_text(in_id).find("THIS_IS_A_SECRET"), std::string::npos) << all_text(in_id);
+  auto dup = load(R"([{"id": "sk-ish-but-valid", "hash": ")" + kHash + R"("},
+                      {"id": "sk-ish-but-valid", "hash": "sha256:)" +
+                  std::string(64, 'c') + R"("}])");
+  EXPECT_EQ(all_text(dup).find("sk-ish"), std::string::npos) << all_text(dup);
   // 未知字段：只报告字段名
   auto unknown =
       load(R"([{"id": "a", "hash": ")" + kHash + R"(", "secret": ")" + secret + R"("}])");

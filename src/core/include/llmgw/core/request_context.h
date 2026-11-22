@@ -48,9 +48,11 @@ struct RequestInfo {
   Endpoint endpoint = Endpoint::kChatCompletions;
   /// Authorization: Bearer 之后的部分（客户端的网关 key）；没有时为空。由 auth 插件校验。
   /// ⚠️ 这是密钥：不能写进日志、错误信息和指标，也不能转发给上游
-  std::string bearer_token{};
+  // 显式的 {}：GCC 的 -Wmissing-field-initializers 对没有默认初始化器的成员报警（指定初始化器省略了
+  // 它们时），clang-tidy 又认为它多余，两者冲突，以编译器为准
+  std::string bearer_token{};  // NOLINT(readability-redundant-member-init)
   /// 客户端的 IP 地址（TCP 连接的对端；不看 X-Forwarded-For，那是客户端可以伪造的）
-  std::string client_address{};
+  std::string client_address{};  // NOLINT(readability-redundant-member-init)：同上
 };
 
 /// 鉴权结果。写入者：auth 中间件。

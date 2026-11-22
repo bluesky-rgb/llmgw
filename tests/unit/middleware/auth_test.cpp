@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
 #include <chrono>
@@ -49,6 +50,31 @@ TEST(GenerateKey, format_and_uniqueness) {
     seen.insert(k);
   }
   EXPECT_EQ(seen.size(), 1000U);
+}
+
+// base64url 编码正确：解码回来恰好 32 字节，最后一个字符只携带 2 位（4 位补零），所以只有 16 种取值
+TEST(GenerateKey, decodes_back_to_32_bytes) {
+  const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  std::set<char> last_chars;
+  for (int i = 0; i < 300; ++i) {
+    const std::string body = generate_key().substr(6);
+    std::uint32_t buffer = 0;
+    int bits = 0;
+    std::vector<unsigned char> bytes;
+    for (const char c : body) {
+      buffer = (buffer << 6U) | static_cast<std::uint32_t>(alphabet.find(c));
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        bytes.push_back(
+            static_cast<unsigned char>((buffer >> static_cast<unsigned>(bits)) & 0xFFU));
+      }
+    }
+    ASSERT_EQ(bytes.size(), 32U);
+    EXPECT_EQ(buffer & ((1U << static_cast<unsigned>(bits)) - 1), 0U) << "补的位必须是 0";
+    last_chars.insert(body.back());
+  }
+  EXPECT_LE(last_chars.size(), 16U);
 }
 
 TEST(HashKey, matches_known_sha256_vectors) {
@@ -163,17 +189,38 @@ TEST(Auth, ipv6_is_counted_per_64_prefix) {
   EXPECT_EQ(status_of(f.call("bad", "2001:db8:1:3::1").decision), 401) << "别的 /64";
 }
 
+// 双栈监听时 IPv4 客户端显示为 ::ffff:a.b.c.d。按 /64 截断会让所有 IPv4 客户端落进同一个桶
+// （::/64）：一个配错的客户端会让所有人的失败都变成 429（独立审查 2.2 #3）
+TEST(Auth, v4_mapped_addresses_are_counted_per_ipv4_address) {
+  AuthFixture f(R"({"failures_per_minute": 1})");
+  EXPECT_EQ(status_of(f.call("bad", "::ffff:203.0.113.7").decision), 401);
+  EXPECT_EQ(status_of(f.call("bad", "::ffff:203.0.113.7").decision), 429);
+  EXPECT_EQ(status_of(f.call("bad", "::ffff:198.51.100.1").decision), 401) << "别的 IPv4 客户端";
+  EXPECT_EQ(status_of(f.call("bad", "203.0.113.7").decision), 429) << "与 ::ffff: 形式是同一个地址";
+}
+
 TEST(Auth, full_address_table_stops_tracking_but_still_authenticates) {
   AuthFixture f(R"({"failures_per_minute": 1})");
   for (int i = 0; i < 4096; ++i) {
     (void)f.call("bad", "10.0." + std::to_string(i / 256) + "." + std::to_string(i % 256));
   }
+  ::testing::internal::CaptureStderr();
   // 表满了、都没过期：新地址不再被记录（不限速），但鉴权照常
   EXPECT_EQ(status_of(f.call("bad", "192.0.2.1").decision), 401);
   EXPECT_EQ(status_of(f.call("bad", "192.0.2.1").decision), 401) << "没有被记录，所以不会 429";
   EXPECT_EQ(status_of(f.call(f.key, "192.0.2.1").decision), 200);
   // 已经记录的地址照样限速
   EXPECT_EQ(status_of(f.call("bad", "10.0.0.0").decision), 429);
+  // 表满之后的失败不能悄无声息：每分钟最多一行汇总日志（独立审查 2.2 #4）
+  for (int i = 0; i < 100; ++i)
+    (void)f.call("bad", "192.0.2." + std::to_string(i + 10), seconds(1));
+  const std::string logged = ::testing::internal::GetCapturedStderr();
+  std::size_t summaries = 0;
+  for (auto pos = logged.find("tracker is full"); pos != std::string::npos;
+       pos = logged.find("tracker is full", pos + 1)) {
+    ++summaries;
+  }
+  EXPECT_EQ(summaries, 1U) << "102 次未记录地址的失败，同一分钟内只汇总一行：\n" << logged;
   // 过期之后（每秒最多清理一次）新地址又能被记录
   EXPECT_EQ(status_of(f.call("bad", "192.0.2.2", seconds(61)).decision), 401);
   EXPECT_EQ(status_of(f.call("bad", "192.0.2.2", seconds(61)).decision), 429);

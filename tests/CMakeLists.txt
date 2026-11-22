@@ -86,6 +86,12 @@ llmgw_cli_test(check_rejects_plaintext_key ARGS "check|-c|${cli_dir}/plaintext_k
                EXPECT 1 REQUIRE "keys\\[0\\]\\.hash：这是 key 本身" FORBID "PLAINTEXT_KEY")
 llmgw_cli_test(serve_rejects_plaintext_key ARGS "serve|-c|${cli_dir}/plaintext_key.json" EXPECT 1
                REQUIRE "这是 key 本身" FORBID "PLAINTEXT_KEY" ENV "OPENAI_API_KEY=x")
+# JSON 语法错误的提示不能带出出错位置附近的文本（nlohmann 的 "last read: '...'" 会把 key 打印出来，
+# 任务 2.2 独立审查 #1）
+llmgw_cli_test(check_syntax_error_does_not_echo_text ARGS "check|-c|${cli_dir}/syntax_error_with_key.json|--skip-env"
+               EXPECT 1 REQUIRE "JSON 语法错误" FORBID "SYNTAX_ERROR_SECRET")
+llmgw_cli_test(check_syntax_error_trailing_does_not_echo_text ARGS "check|-c|${cli_dir}/syntax_error_trailing.json|--skip-env"
+               EXPECT 1 REQUIRE "JSON 语法错误" FORBID "TRAILING_SECRET")
 llmgw_cli_test(check_auth_without_keys ARGS "check|-c|${cli_dir}/auth_without_keys.json|--skip-env"
                EXPECT 1 REQUIRE "启用了 auth 但没有配置 keys")
 llmgw_cli_test(check_keys_without_auth_warns ARGS "check|-c|${cli_dir}/keys_without_auth.json|--skip-env"

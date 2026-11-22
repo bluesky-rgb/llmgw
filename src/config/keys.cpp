@@ -38,7 +38,13 @@ std::string normalize_hash(std::string_view hash) {
 KeyConfig read_key(ObjectReader r) {
   KeyConfig k;
   if (auto id = r.string("id", true)) {
-    if (valid_id(*id)) {
+    if (id->starts_with("sk-")) {
+      // id 会出现在日志、指标和用量中：把 key 写在这里同样是泄露（任务 2.2 独立审查 #2）
+      r.diag()->error(
+          r.path_of("id"),
+          "这像是 key 本身，不能作为 id（id 会出现在日志和指标中）；id 不能以 \"sk-\" 开头。"
+          "如果这是一个 key，请当作已泄露，重新生成一个");
+    } else if (valid_id(*id)) {
       k.id = std::move(*id);
     } else {
       r.diag()->error(r.path_of("id"),
@@ -73,8 +79,7 @@ void check_keys(const std::vector<KeyConfig>& keys, Diagnostics* diag) {
   for (std::size_t i = 0; i < keys.size(); ++i) {
     for (std::size_t j = 0; j < i; ++j) {
       if (!keys[i].id.empty() && keys[i].id == keys[j].id) {
-        diag->error(index_path("keys", i) + ".id",
-                    "\"" + keys[i].id + "\" 与 " + index_path("keys", j) + " 重名");
+        diag->error(index_path("keys", i) + ".id", "与 " + index_path("keys", j) + " 的 id 重名");
       }
       if (!keys[i].hash.empty() && keys[i].hash == keys[j].hash) {
         diag->error(index_path("keys", i) + ".hash",

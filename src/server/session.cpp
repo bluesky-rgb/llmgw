@@ -41,15 +41,20 @@ Session::Session(tcp::socket socket, WorkerContext* worker)
 RequestInfo Session::make_info(const Request& request, std::string request_id,
                                Endpoint endpoint) const {
   const auto now = SteadyClock::now();
-  return RequestInfo{.request_id = std::move(request_id),
-                     .model = {},
-                     .stream = false,
-                     .body = {},
-                     .received_at = now,
-                     .deadline = now + worker_->config->timeouts.total,
-                     .endpoint = endpoint,
-                     .bearer_token = bearer_token(request[http::field::authorization]),
-                     .client_address = peer_};
+  return RequestInfo{
+      .request_id = std::move(request_id),
+      .model = {},
+      .stream = false,
+      .body = {},
+      .received_at = now,
+      .deadline = now + worker_->config->timeouts.total,
+      .endpoint = endpoint,
+      // 多个 Authorization 头：前面的代理可能取的是另一个，不知道该信哪一个，当作没有 key
+      // （任务 2.2 独立审查）
+      .bearer_token = request.count(http::field::authorization) == 1
+                          ? bearer_token(request[http::field::authorization])
+                          : std::string(),
+      .client_address = peer_};
 }
 
 Task<> run_session(std::unique_ptr<Session> session) { co_await session->run(); }
