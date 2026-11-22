@@ -1,2 +1,7 @@
-# 模块 stream：目前还没有源文件，依赖关系已经由 llmgw_add_module 校验
-llmgw_add_module(stream DEPS core observability)
+# 模块 stream：SSE 解析、usage 提取、ResponseStream（任务 1.5）
+llmgw_add_module(stream
+  SOURCES sse_parser.cpp inspect.cpp stream.cpp
+  DEPS core observability)
+
+llmgw_fetch_dependency(simdjson)
+target_link_libraries(llmgw_stream PRIVATE simdjson::simdjson)

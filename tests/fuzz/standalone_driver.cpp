@@ -2,7 +2,11 @@
 // 时使用的简单驱动：从语料出发做随机变异（翻转、插入、删除、复制字节，以及纯随机输入）， 调用同一个
 // LLVMFuzzerTestOneInput。没有覆盖率引导，但足以发现崩溃和 sanitizer 报告。 用法：driver <语料目录>
 // <秒数> [种子]
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +18,32 @@
 #include <vector>
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size);
+
+namespace {
+
+// 当前的输入：崩溃（陷阱、段错误、abort）时写到 crash-input 文件，用来复现（与 libFuzzer 的 crash-*
+// 文件相同用途）。 信号处理函数中只能使用异步信号安全的函数：open / write / close
+const char* g_input = nullptr;
+std::size_t g_size = 0;
+
+void save_crash_input(int sig) {
+  const int fd = ::open("crash-input", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd >= 0) {
+    std::size_t off = 0;
+    while (off < g_size) {
+      const auto n = ::write(fd, g_input + off, g_size - off);
+      if (n <= 0) break;
+      off += static_cast<std::size_t>(n);
+    }
+    ::close(fd);
+  }
+  constexpr char kMsg[] = "崩溃：触发的输入已写入 crash-input\n";
+  (void)!::write(2, kMsg, sizeof kMsg - 1);
+  std::signal(sig, SIG_DFL);
+  std::raise(sig);
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
   if (argc < 3) {
@@ -27,6 +57,8 @@ int main(int argc, char** argv) {
     ss << in.rdbuf();
     corpus.push_back(ss.str());
   }
+  for (const int sig : {SIGILL, SIGSEGV, SIGABRT, SIGFPE, SIGBUS})
+    std::signal(sig, save_crash_input);
   const auto seconds = std::atoi(argv[2]);
   std::mt19937_64 rng(argc > 3 ? std::strtoull(argv[3], nullptr, 10) : std::random_device{}());
   auto pick = [&](std::size_t n) { return n == 0 ? 0 : static_cast<std::size_t>(rng() % n); };
@@ -69,6 +101,8 @@ int main(int argc, char** argv) {
       }
     }
     if (s.size() > (1U << 20)) s.resize(1U << 20);
+    g_input = s.data();
+    g_size = s.size();
     LLVMFuzzerTestOneInput(reinterpret_cast<const std::uint8_t*>(s.data()), s.size());
     ++runs;
   }

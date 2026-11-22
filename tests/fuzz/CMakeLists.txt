@@ -26,3 +26,6 @@ find_package(OpenSSL 3 REQUIRED)
 # 上游的响应（任务 1.4）：测试 upstream 的内部组件（响应头、响应体的读取）
 llmgw_fuzz_target(upstream_response SOURCES upstream_response_fuzz.cpp LIBS llmgw::upstream Boost::beast OpenSSL::SSL)
 target_include_directories(llmgw_fuzz_upstream_response PRIVATE "${CMAKE_SOURCE_DIR}/src/upstream")
+# SSE 解析器（任务 1.5）：切块方式不影响结果
+llmgw_fuzz_target(sse SOURCES sse_fuzz.cpp LIBS llmgw::stream)
+target_include_directories(llmgw_fuzz_sse PRIVATE "${CMAKE_SOURCE_DIR}/src/stream")
