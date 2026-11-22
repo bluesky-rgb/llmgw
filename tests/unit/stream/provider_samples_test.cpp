@@ -1,6 +1,7 @@
-// 真实上游的响应样本（任务 1.8）：tests/data/providers/ 中的每个样本都经过 stream::open()，检查不变式。
-// 样本由 tools/provider-probe/probe.py 录制；samples/index.json 记录每个样本的状态码和 Content-Type。
-// 环境变量 LLMGW_PROVIDER_SAMPLES 可以指向另一个样本目录（验证这个测试本身时使用）。
+// 真实上游的响应样本（任务 1.8）：tests/data/providers/ 中的每个样本都经过
+// stream::open()，检查不变式。 样本由 tools/provider-probe/probe.py 录制；samples/index.json
+// 记录每个样本的状态码和 Content-Type。 环境变量 LLMGW_PROVIDER_SAMPLES
+// 可以指向另一个样本目录（验证这个测试本身时使用）。
 #include <gtest/gtest.h>
 
 #include <cstdlib>
@@ -18,7 +19,8 @@ namespace fs = std::filesystem;
 using Json = nlohmann::json;
 
 fs::path samples_root() {
-  if (const char* env = std::getenv("LLMGW_PROVIDER_SAMPLES"); env != nullptr && *env != '\0') return env;
+  if (const char* env = std::getenv("LLMGW_PROVIDER_SAMPLES"); env != nullptr && *env != '\0')
+    return env;
   return LLMGW_PROVIDER_SAMPLES_DIR;
 }
 
@@ -66,7 +68,8 @@ std::vector<Step> bytewise(const std::string& body) {
 std::int64_t last_prompt_tokens(const std::vector<Json>& events) {
   std::int64_t v = -1;
   for (const auto& e : events) {
-    if (e.is_object() && e.contains("usage") && e["usage"].is_object() && e["usage"].contains("prompt_tokens"))
+    if (e.is_object() && e.contains("usage") && e["usage"].is_object() &&
+        e["usage"].contains("prompt_tokens"))
       v = e["usage"]["prompt_tokens"].get<std::int64_t>();
   }
   return v;
@@ -83,7 +86,8 @@ std::vector<std::pair<std::string, Json>> sse_events(const std::string& body) {
     Json data = nullptr;
     if (auto d = raw.find("data:"); d != std::string::npos) {
       std::string payload = raw.substr(d + 5);
-      while (!payload.empty() && (payload.back() == '\n' || payload.back() == '\r')) payload.pop_back();
+      while (!payload.empty() && (payload.back() == '\n' || payload.back() == '\r'))
+        payload.pop_back();
       if (!payload.empty() && payload.front() == ' ') payload.erase(0, 1);
       data = Json::parse(payload, nullptr, false);
       if (data.is_discarded()) data = nullptr;
@@ -100,7 +104,8 @@ ResponseHead head_of(const Sample& s) {
 
 TEST(ProviderSamples, every_sample_passes_through_the_stream_layer) {
   const auto samples = load();
-  if (samples.empty()) GTEST_SKIP() << "没有样本：" << samples_root() << "（任务 1.8 由作者用真实 key 录制）";
+  if (samples.empty())
+    GTEST_SKIP() << "没有样本：" << samples_root() << "（任务 1.8 由作者用真实 key 录制）";
   int sse = 0;
   for (const auto& s : samples) {
     SCOPED_TRACE(s.name);
@@ -127,12 +132,14 @@ TEST(ProviderSamples, every_sample_passes_through_the_stream_layer) {
     // 3. 去掉 usage 块：只少了“choices 为空、带 usage”的事件，其余原样
     std::string expected;
     for (const auto& [raw, data] : sse_events(s.body)) {
-      const bool usage_only = data.is_object() && data.contains("usage") && data["usage"].is_object() &&
+      const bool usage_only = data.is_object() && data.contains("usage") &&
+                              data["usage"].is_object() &&
                               (!data.contains("choices") || data["choices"].empty());
       if (!usage_only) expected += raw;
     }
     auto ctx3 = make_ctx();
-    const Drained stripped = run(drain(head_of(s), {{s.body}}, &ctx3, Options{.strip_usage_chunk = true}));
+    const Drained stripped =
+        run(drain(head_of(s), {{s.body}}, &ctx3, Options{.strip_usage_chunk = true}));
     EXPECT_EQ(stripped.all(), expected);
     EXPECT_EQ(ctx3.usage.reported, prompt >= 0) << "去掉 usage 块时仍然要记录用量";
   }
@@ -143,8 +150,9 @@ TEST(ProviderSamples, every_sample_passes_through_the_stream_layer) {
 TEST(ProviderSamples, minimax_business_errors_are_mapped) {
   const auto samples = load();
   if (samples.empty()) GTEST_SKIP() << "没有样本";
-  const ErrorMapping mapping{.path = {"base_resp", "status_code"},
-                             .codes = {{"1002", 429}, {"1004", 401}, {"1008", 402}, {"1001", 504}, {"1013", 500}}};
+  const ErrorMapping mapping{
+      .path = {"base_resp", "status_code"},
+      .codes = {{"1002", 429}, {"1004", 401}, {"1008", 402}, {"1001", 504}, {"1013", 500}}};
   int checked = 0;
   for (const auto& s : samples) {
     if (s.provider != "minimax" || s.status != 200) continue;
@@ -154,13 +162,15 @@ TEST(ProviderSamples, minimax_business_errors_are_mapped) {
       const auto events = sse_events(s.body);
       for (const auto& [raw, data] : events) {
         if (data.is_object()) {  // 只检查第一个 JSON 事件（与 stream 的预读一致）
-          if (data.contains("base_resp")) code = data["base_resp"].value("status_code", Json(0)).dump();
+          if (data.contains("base_resp"))
+            code = data["base_resp"].value("status_code", Json(0)).dump();
           break;
         }
       }
     } else {
       const Json j = Json::parse(s.body, nullptr, false);
-      if (j.is_object() && j.contains("base_resp")) code = j["base_resp"].value("status_code", Json(0)).dump();
+      if (j.is_object() && j.contains("base_resp"))
+        code = j["base_resp"].value("status_code", Json(0)).dump();
     }
     const auto it = mapping.codes.find(code);
     const int expected = it == mapping.codes.end() ? 200 : it->second;
