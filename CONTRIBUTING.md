@@ -7,6 +7,7 @@
 - 使用问题、想法讨论：[Discussions](https://github.com/bluesky-rgb/llmgw/discussions)
 - 缺陷报告、功能请求：[Issues](https://github.com/bluesky-rgb/llmgw/issues/new/choose)
 - 安全问题：**不要公开提交**，按 [SECURITY.md](SECURITY.md) 私下报告
+- 第一次读代码：先看 [项目导览](docs/tour.md)
 - 所有参与者都要遵守 [行为准则](CODE_OF_CONDUCT.md)
 
 ## 1. 开发环境
