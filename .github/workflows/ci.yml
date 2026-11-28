@@ -86,7 +86,7 @@ jobs:
         if: always()
         run: CLANG_TIDY=clang-tidy-18 tools/run_clang_tidy.sh build
       # 测试工具（Go）：格式、静态检查、单元测试（含竞态检测）
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         if: always()
         with:
           go-version-file: tools/mock-upstream/go.mod
